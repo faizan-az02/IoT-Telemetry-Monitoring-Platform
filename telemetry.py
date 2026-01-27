@@ -36,7 +36,7 @@ with open("telemetry_data.txt", 'a') as f:
         }
 
 
-        # Writing Telemetry Data to File
+        # Writing Telemetry Data to DB
         collection.insert_one(telemetry_data)
         print(f"Sample {i+1}/{dataset_size} collected.", end='\r')
         time.sleep(time_interval)
