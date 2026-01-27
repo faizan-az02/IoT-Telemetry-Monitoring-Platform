@@ -1,1 +1,0 @@
-{"device_id": "faizan_edge_1", "cpu_usage (%)": 10.7, "memory_usage (%)": 68.0, "disk_usage (%)": 75.4, "timestamp": {"device_id": "faizan_edge_1", "cpu_usage (%)": 0.6, "memory_usage (%)": 67.6, "disk_usage (%)": 75.4, "timestamp": 
