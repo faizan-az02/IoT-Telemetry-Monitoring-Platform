@@ -3,6 +3,13 @@ import json
 import psutil
 import time
 from datetime import datetime
+from pymongo import MongoClient
+
+# Setting up MongoDB connection
+
+client = MongoClient("mongodb://localhost:27017/")
+db = client.telemetry_db
+collection = db.telemetry_data
 
 # Getting Device Information
 
@@ -30,8 +37,9 @@ with open("telemetry_data.txt", 'a') as f:
 
 
         # Writing Telemetry Data to File
-        json.dump(telemetry_data, f)
-        f.write('\n')
+        collection.insert_one(telemetry_data)
+        print(f"Sample {i+1}/{dataset_size} collected.", end='\r')
+        time.sleep(time_interval)
 
         time.sleep(time_interval)
 
