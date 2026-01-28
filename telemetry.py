@@ -20,30 +20,29 @@ device_id = os.getenv('DEVICE_ID', 'edge-1')
 
 print(f"Device ID: {device_id}")
 
-with open("telemetry_data.txt", 'a') as f:
 
-    for i in range(dataset_size):
-        now = datetime.now()
+for i in range(dataset_size):
+    now = datetime.now()
 
-        # Collecting Telemetry Data
-        telemetry_data = {
-            "device_id": device_id,
-            "cpu_usage (%)": psutil.cpu_percent(interval=1),
-            "memory_usage (%)": psutil.virtual_memory().percent,
-            "disk_usage (%)": psutil.disk_usage('/').percent,
-            "timestamp": now,
-            "datetime_str": now.strftime("%Y-%m-%d %H:%M:%S")
-        }
+    # Collecting Telemetry Data
+    telemetry_data = {
+        "device_id": device_id,
+        "cpu_usage (%)": psutil.cpu_percent(interval=1),
+        "memory_usage (%)": psutil.virtual_memory().percent,
+        "disk_usage (%)": psutil.disk_usage('/').percent,
+        "timestamp": now,
+        "datetime_str": now.strftime("%Y-%m-%d %H:%M:%S")
+    }
 
 
-        # Writing Telemetry Data to DB
-        collection.insert_one(telemetry_data)
-        print(f"Sample {i+1}/{dataset_size} collected.", end='\r')
-        time.sleep(time_interval)
+    # Writing Telemetry Data to DB
+    collection.insert_one(telemetry_data)
+    print(f"Sample {i+1}/{dataset_size} collected.", end='\r')
+    time.sleep(time_interval)
 
-        time.sleep(time_interval)
+    time.sleep(time_interval)
 
-        print(f"Sample {i+1}/{dataset_size} collected.", end = '\r')
+    print(f"Sample {i+1}/{dataset_size} collected.", end = '\r')
 
 print("\nTelemetry data collection complete.")
               
