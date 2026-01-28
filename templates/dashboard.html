@@ -191,7 +191,7 @@
               {% if summary and summary.count %}
                 <tfoot>
                   <tr>
-                    <td colspan="2" class="muted">Averages</td>
+                    <td colspan="2" class="muted">Average</td>
                     <td class="num muted">{% if summary.cpu_avg is not none %}{{ "%.1f"|format(summary.cpu_avg) }}{% else %}—{% endif %}</td>
                     <td class="num muted">{% if summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}{% else %}—{% endif %}</td>
                     <td class="num muted">{% if summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}{% else %}—{% endif %}</td>
