@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Telemetry Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">IoT</div>
+          <div class="brand-text">
+            <div class="brand-title">Telemetry</div>
+            <div class="brand-subtitle">Monitoring Platform</div>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <a class="nav-item active" href="{{ url_for('dashboard') }}">Dashboard</a>
+          <a class="nav-item disabled" href="#" title="Coming soon">Analytics</a>
+          <a class="nav-item disabled" href="#" title="Coming soon">Admin</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="hint">
+            Backend: Flask<br />
+            Storage: MongoDB
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 class="page-title">Dashboard</h1>
+            <p class="page-subtitle">Latest device telemetry and recent samples</p>
+          </div>
+
+          <form class="filters" method="get" action="{{ url_for('dashboard') }}">
+            <label class="field">
+              <span class="field-label">Device</span>
+              <select name="device_id" class="select">
+                <option value="" {% if not selected_device %}selected{% endif %}>All devices</option>
+                {% for d in (devices or []) %}
+                  <option value="{{ d }}" {% if selected_device == d %}selected{% endif %}>{{ d }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Samples</span>
+              <select name="limit" class="select">
+                {% for n in [25, 50, 100, 200, 500] %}
+                  <option value="{{ n }}">{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <button class="btn" type="submit">Apply</button>
+          </form>
+        </header>
+
+        <section class="grid">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Latest CPU</div>
+                <div class="card-value">
+                  {% if latest and latest.cpu is not none %}
+                    {{ "%.1f"|format(latest.cpu) }}%
+                  {% else %}
+                    —
+                  {% endif %}
+                </div>
+              </div>
+              <div class="badge">CPU</div>
+            </div>
+            <div class="card-foot">
+              <div class="muted">
+                {% if latest and latest.device_id %}
+                  Device: <strong>{{ latest.device_id }}</strong>
+                {% else %}
+                  No samples yet
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Latest Memory</div>
+                <div class="card-value">
+                  {% if latest and latest.memory is not none %}
+                    {{ "%.1f"|format(latest.memory) }}%
+                  {% else %}
+                    —
+                  {% endif %}
+                </div>
+              </div>
+              <div class="badge">RAM</div>
+            </div>
+            <div class="card-foot">
+              <div class="muted">
+                Avg (loaded): {% if summary and summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}%{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Latest Disk</div>
+                <div class="card-value">
+                  {% if latest and latest.disk is not none %}
+                    {{ "%.1f"|format(latest.disk) }}%
+                  {% else %}
+                    —
+                  {% endif %}
+                </div>
+              </div>
+              <div class="badge">DISK</div>
+            </div>
+            <div class="card-foot">
+              <div class="muted">
+                Avg (loaded): {% if summary and summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}%{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Samples loaded</div>
+                <div class="card-value">
+                  {% if summary %}{{ summary.count }}{% else %}0{% endif %}
+                </div>
+              </div>
+              <div class="badge">DB</div>
+            </div>
+            <div class="card-foot">
+              <div class="muted">
+                Last update: {% if latest and latest.datetime_str %}{{ latest.datetime_str }}{% else %}—{% endif %}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Recent telemetry</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" type="button" id="refreshBtn">Refresh</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table" aria-label="Recent telemetry samples">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Device</th>
+                  <th class="num">CPU (%)</th>
+                  <th class="num">Memory (%)</th>
+                  <th class="num">Disk (%)</th>
+                </tr>
+              </thead>
+              <tbody id="telemetryTbody">
+                {% for r in (rows or []) %}
+                  <tr>
+                    <td class="mono">
+                      {{ r.get("datetime_str") or r.get("timestamp") or "—" }}
+                    </td>
+                    <td class="mono">{{ r.get("device_id", "—") }}</td>
+                    <td class="num">{{ r.get("cpu_usage (%)", "—") }}</td>
+                    <td class="num">{{ r.get("memory_usage (%)", "—") }}</td>
+                    <td class="num">{{ r.get("disk_usage (%)", "—") }}</td>
+                  </tr>
+                {% endfor %}
+                {% if not rows %}
+                  <tr>
+                    <td colspan="5" class="empty">
+                      No telemetry samples found. Run <span class="mono">telemetry.py</span> to generate data.
+                    </td>
+                  </tr>
+                {% endif %}
+              </tbody>
+              {% if summary and summary.count %}
+                <tfoot>
+                  <tr>
+                    <td colspan="2" class="muted">Averages (loaded)</td>
+                    <td class="num muted">{% if summary.cpu_avg is not none %}{{ "%.1f"|format(summary.cpu_avg) }}{% else %}—{% endif %}</td>
+                    <td class="num muted">{% if summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}{% else %}—{% endif %}</td>
+                    <td class="num muted">{% if summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}{% else %}—{% endif %}</td>
+                  </tr>
+                </tfoot>
+              {% endif %}
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      window.__DASHBOARD__ = {
+        selectedDevice: {{ (selected_device or "")|tojson }},
+      };
+    </script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+  </body>
+</html>
+
