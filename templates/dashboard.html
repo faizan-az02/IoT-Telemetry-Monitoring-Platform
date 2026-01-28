@@ -33,34 +33,37 @@
       </aside>
 
       <main class="main">
-        <header class="topbar">
-          <div>
+        <header class="topbar-dashboard">
+          <div class="topbar-row">
             <h1 class="page-title">Dashboard</h1>
-            <p class="page-subtitle">Latest device telemetry and recent samples</p>
+
+            <form class="filters filters-inline" method="get" action="{{ url_for('dashboard') }}">
+              <label class="field">
+                <span class="field-label">Device</span>
+                <select name="device_id" class="select">
+                  <option value="" {% if not selected_device %}selected{% endif %}>All devices</option>
+                  {% for d in (devices or []) %}
+                    <option value="{{ d }}" {% if selected_device == d %}selected{% endif %}>{{ d }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <label class="field">
+                <span class="field-label">Samples</span>
+                <select name="limit" class="select">
+                  {% for n in [10, 25, 50, 75, 100] %}
+                    <option value="{{ n }}" {% if (selected_limit or 25) == n %}selected{% endif %}>{{ n }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+
+              <button class="btn" type="submit">Apply</button>
+            </form>
+
+            <a class="btn get-new-data" href="{{ url_for('collect') }}">Get new data</a>
           </div>
 
-          <form class="filters" method="get" action="{{ url_for('dashboard') }}">
-            <label class="field">
-              <span class="field-label">Device</span>
-              <select name="device_id" class="select">
-                <option value="" {% if not selected_device %}selected{% endif %}>All devices</option>
-                {% for d in (devices or []) %}
-                  <option value="{{ d }}" {% if selected_device == d %}selected{% endif %}>{{ d }}</option>
-                {% endfor %}
-              </select>
-            </label>
-
-            <label class="field">
-              <span class="field-label">Samples</span>
-              <select name="limit" class="select">
-                {% for n in [10, 25, 50, 75, 100] %}
-                  <option value="{{ n }}" {% if (selected_limit or 25) == n %}selected{% endif %}>{{ n }}</option>
-                {% endfor %}
-              </select>
-            </label>
-
-            <button class="btn" type="submit">Apply</button>
-          </form>
+          <p class="page-subtitle">Latest device telemetry and recent samples</p>
         </header>
 
         <section class="grid">

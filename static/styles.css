@@ -138,6 +138,43 @@ body {
   margin-bottom: 18px;
 }
 
+.topbar-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.topbar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.topbar-row .get-new-data {
+  margin-left: auto;
+}
+
+/* Dashboard header filters should be inline and height-consistent with the title/buttons */
+.filters-inline {
+  margin-left: 6px;
+  align-items: center;
+}
+
+.filters-inline .field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.filters-inline .field-label {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--muted-2);
+}
+
 .page-title {
   margin: 0;
   font-size: 28px;
@@ -177,12 +214,28 @@ body {
   outline: none;
 }
 
+.input {
+  min-width: 220px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  outline: none;
+}
+
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
   padding: 10px 14px;
   border-radius: 12px;
   border: 1px solid rgba(124, 92, 255, 0.25);
   background: rgba(124, 92, 255, 0.16);
   color: var(--text);
+  text-decoration: none;
   cursor: pointer;
   transition: 140ms ease;
 }
@@ -195,6 +248,13 @@ body {
 .btn.ghost {
   border-color: rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.05);
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
 }
 
 .grid {
@@ -267,6 +327,15 @@ body {
   overflow: hidden;
 }
 
+.collect-page .collect-panel {
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.collect-page .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .panel-head {
   display: flex;
   align-items: center;
@@ -319,8 +388,8 @@ body {
 
 .table tfoot td {
   background: rgba(255, 255, 255, 0.04);
-  border-top: 4px solid rgba(255, 255, 255, 0.16);
-  border-bottom: 4px solid rgba(255, 255, 255, 0.16);
+  border-top: 3px solid rgba(255, 255, 255, 0.16);
+  border-bottom: 3px solid rgba(255, 255, 255, 0.16);
 }
 
 .table tfoot td:first-child {
@@ -333,6 +402,54 @@ body {
 
 .panel-body {
   padding: 14px 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 14px 0;
+}
+
+.status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(124, 92, 255, 0.95), rgba(43, 231, 198, 0.85));
+}
+
+.log-box {
+  margin-top: 12px;
+  max-height: 360px;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.22);
+  padding: 12px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: pre-wrap;
 }
 
 .chart-grid {
@@ -411,6 +528,10 @@ body {
   }
 
   .chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-grid {
     grid-template-columns: 1fr;
   }
 }
