@@ -8,15 +8,15 @@ function getSelectedDevice() {
 
 function getSelectedLimit() {
   const select = document.querySelector('select[name="limit"]');
-  const val = select && select.value ? Number(select.value) : Number(document.body.dataset.selectedLimit || 50);
-  const capped = Math.max(1, Math.min(100, Number.isFinite(val) ? val : 50));
+  const val = select && select.value ? Number(select.value) : Number(document.body.dataset.selectedLimit || 100);
+  const capped = Math.max(1, Math.min(100, Number.isFinite(val) ? val : 100));
   return String(capped);
 }
 
 async function fetchRecent(deviceId, limit) {
   const params = new URLSearchParams();
   if (deviceId) params.set("device_id", deviceId);
-  params.set("limit", limit || "50");
+  params.set("limit", limit || "100");
   const res = await fetch(`/api/telemetry/recent?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to load telemetry (${res.status})`);
   const json = await res.json();

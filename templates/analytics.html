@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   </head>
 
-  <body data-selected-device="{{ selected_device or '' }}" data-selected-limit="{{ selected_limit or 50 }}">
+  <body data-selected-device="{{ selected_device or '' }}" data-selected-limit="{{ selected_limit or 100 }}">
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -51,7 +51,7 @@
             </label>
 
             <label class="field">
-              <span class="field-label">Samples (≤ 100)</span>
+              <span class="field-label">Samples</span>
               <select name="limit" class="select">
                 {% for n in [10, 25, 50, 75, 100] %}
                   <option value="{{ n }}" {% if (selected_limit or 50) == n %}selected{% endif %}>{{ n }}</option>
@@ -67,7 +67,7 @@
           <div class="card">
             <div class="card-head">
               <div>
-                <div class="card-kicker">CPU avg / min / max</div>
+                <div class="card-kicker">CPU: Avg / Min / Max</div>
                 <div class="card-value" id="cpuStat">—</div>
               </div>
               <div class="badge">CPU</div>
@@ -78,7 +78,7 @@
           <div class="card">
             <div class="card-head">
               <div>
-                <div class="card-kicker">Memory avg / min / max</div>
+                <div class="card-kicker">Memory: Avg / Min / Max</div>
                 <div class="card-value" id="memStat">—</div>
               </div>
               <div class="badge">RAM</div>
@@ -89,7 +89,7 @@
           <div class="card">
             <div class="card-head">
               <div>
-                <div class="card-kicker">Disk avg / min / max</div>
+                <div class="card-kicker">Disk: Avg / Min / Max</div>
                 <div class="card-value" id="diskStat">—</div>
               </div>
               <div class="badge">DISK</div>
@@ -111,7 +111,7 @@
 
         <section class="panel">
           <div class="panel-head">
-            <h2 class="panel-title">Trends (most recent → oldest)</h2>
+            <h2 class="panel-title">Trends: Most Recent → Oldest</h2>
             <div class="panel-actions">
               <button class="btn ghost" type="button" id="reloadBtn">Reload</button>
             </div>

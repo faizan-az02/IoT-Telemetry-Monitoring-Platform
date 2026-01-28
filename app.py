@@ -93,7 +93,7 @@ def create_app() -> Flask:
     @app.get("/analytics")
     def analytics():
         device_id = request.args.get("device_id")  # optional filter
-        limit = min(int(request.args.get("limit", "50")), MAX_LIMIT)
+        limit = min(int(request.args.get("limit", "100")), MAX_LIMIT)
 
         # For initial render we just provide devices/selected values;
         # charts/stats are computed client-side via /api/telemetry/recent.
