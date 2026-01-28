@@ -164,6 +164,7 @@
             <table class="table" aria-label="Recent telemetry samples">
               <thead>
                 <tr>
+                  <th class="col-idx">#</th>
                   <th>Timestamp</th>
                   <th>Device</th>
                   <th class="num">CPU (%)</th>
@@ -174,6 +175,7 @@
               <tbody id="telemetryTbody">
                 {% for r in (rows or []) %}
                   <tr>
+                    <td class="col-idx">{{ loop.index }}</td>
                     <td class="mono">
                       {{ r.get("datetime_str") or r.get("timestamp") or "—" }}
                     </td>
@@ -185,7 +187,7 @@
                 {% endfor %}
                 {% if not rows %}
                   <tr>
-                    <td colspan="5" class="empty">
+                    <td colspan="6" class="empty">
                       No telemetry samples found. Run <span class="mono">telemetry.py</span> to generate data.
                     </td>
                   </tr>
@@ -194,7 +196,7 @@
               {% if summary and summary.count %}
                 <tfoot>
                   <tr>
-                    <td colspan="2" class="muted">Average</td>
+                    <td colspan="3" class="muted">Average</td>
                     <td class="num muted">{% if summary.cpu_avg is not none %}{{ "%.1f"|format(summary.cpu_avg) }}{% else %}—{% endif %}</td>
                     <td class="num muted">{% if summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}{% else %}—{% endif %}</td>
                     <td class="num muted">{% if summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}{% else %}—{% endif %}</td>

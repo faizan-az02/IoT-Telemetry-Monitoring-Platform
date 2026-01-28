@@ -29,7 +29,7 @@ function renderRows(rows) {
   if (!rows.length) {
     const tr = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 5;
+    cell.colSpan = 6;
     cell.className = "empty";
     cell.textContent = "No telemetry samples found.";
     tr.appendChild(cell);
@@ -37,14 +37,17 @@ function renderRows(rows) {
     return;
   }
 
+  let idx = 1;
   for (const r of rows) {
     const tr = document.createElement("tr");
+    tr.appendChild(td(String(idx), "col-idx"));
     tr.appendChild(td(r.datetime_str || r.timestamp || "—", "mono"));
     tr.appendChild(td(r.device_id || "—", "mono"));
     tr.appendChild(td(r["cpu_usage (%)"] ?? "—", "num"));
     tr.appendChild(td(r["memory_usage (%)"] ?? "—", "num"));
     tr.appendChild(td(r["disk_usage (%)"] ?? "—", "num"));
     tbody.appendChild(tr);
+    idx += 1;
   }
 }
 

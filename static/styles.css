@@ -386,6 +386,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+.table .col-idx {
+  width: 44px;
+  max-width: 44px;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  padding-left: 12px;
+  padding-right: 10px;
+}
+
 .table tfoot td {
   background: rgba(255, 255, 255, 0.04);
   border-top: 3px solid rgba(255, 255, 255, 0.16);
