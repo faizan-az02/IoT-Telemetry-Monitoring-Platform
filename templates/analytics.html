@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Telemetry Analytics</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+
+  <body data-selected-device="{{ selected_device or '' }}" data-selected-limit="{{ selected_limit or 50 }}">
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">IoT</div>
+          <div class="brand-text">
+            <div class="brand-title">Telemetry</div>
+            <div class="brand-subtitle">Monitoring Platform</div>
+          </div>
+        </div>
+
+        <nav class="nav">
+          <a class="nav-item" href="{{ url_for('dashboard') }}">Dashboard</a>
+          <a class="nav-item active" href="{{ url_for('analytics') }}">Analytics</a>
+          <a class="nav-item disabled" href="#" title="Coming soon">Admin</a>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="hint">
+            Tip: Analytics uses last <span class="mono">N ≤ 100</span> samples<br />
+            Source: MongoDB
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1 class="page-title">Analytics</h1>
+            <p class="page-subtitle">Trends and summary stats from recent telemetry</p>
+          </div>
+
+          <form class="filters" method="get" action="{{ url_for('analytics') }}">
+            <label class="field">
+              <span class="field-label">Device</span>
+              <select name="device_id" class="select">
+                <option value="" {% if not selected_device %}selected{% endif %}>All devices</option>
+                {% for d in (devices or []) %}
+                  <option value="{{ d }}" {% if selected_device == d %}selected{% endif %}>{{ d }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <label class="field">
+              <span class="field-label">Samples (≤ 100)</span>
+              <select name="limit" class="select">
+                {% for n in [10, 25, 50, 75, 100] %}
+                  <option value="{{ n }}" {% if (selected_limit or 50) == n %}selected{% endif %}>{{ n }}</option>
+                {% endfor %}
+              </select>
+            </label>
+
+            <button class="btn" type="submit">Apply</button>
+          </form>
+        </header>
+
+        <section class="grid">
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">CPU avg / min / max</div>
+                <div class="card-value" id="cpuStat">—</div>
+              </div>
+              <div class="badge">CPU</div>
+            </div>
+            <div class="card-foot"><span class="muted" id="cpuMeta">—</span></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Memory avg / min / max</div>
+                <div class="card-value" id="memStat">—</div>
+              </div>
+              <div class="badge">RAM</div>
+            </div>
+            <div class="card-foot"><span class="muted" id="memMeta">—</span></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Disk avg / min / max</div>
+                <div class="card-value" id="diskStat">—</div>
+              </div>
+              <div class="badge">DISK</div>
+            </div>
+            <div class="card-foot"><span class="muted" id="diskMeta">—</span></div>
+          </div>
+
+          <div class="card">
+            <div class="card-head">
+              <div>
+                <div class="card-kicker">Samples analyzed</div>
+                <div class="card-value" id="countStat">0</div>
+              </div>
+              <div class="badge">N</div>
+            </div>
+            <div class="card-foot"><span class="muted" id="timeMeta">—</span></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Trends (most recent → oldest)</h2>
+            <div class="panel-actions">
+              <button class="btn ghost" type="button" id="reloadBtn">Reload</button>
+            </div>
+          </div>
+
+          <div class="panel-body">
+            <div class="chart-grid">
+              <div class="chart-card">
+                <div class="chart-head">
+                  <div class="chart-title">CPU (%)</div>
+                  <div class="chart-legend muted" id="cpuLegend">—</div>
+                </div>
+                <svg class="spark" viewBox="0 0 300 64" role="img" aria-label="CPU trend">
+                  <polyline id="cpuLine" fill="none" stroke="rgba(124, 92, 255, 0.9)" stroke-width="2" points=""></polyline>
+                </svg>
+              </div>
+
+              <div class="chart-card">
+                <div class="chart-head">
+                  <div class="chart-title">Memory (%)</div>
+                  <div class="chart-legend muted" id="memLegend">—</div>
+                </div>
+                <svg class="spark" viewBox="0 0 300 64" role="img" aria-label="Memory trend">
+                  <polyline id="memLine" fill="none" stroke="rgba(43, 231, 198, 0.9)" stroke-width="2" points=""></polyline>
+                </svg>
+              </div>
+
+              <div class="chart-card">
+                <div class="chart-head">
+                  <div class="chart-title">Disk (%)</div>
+                  <div class="chart-legend muted" id="diskLegend">—</div>
+                </div>
+                <svg class="spark" viewBox="0 0 300 64" role="img" aria-label="Disk trend">
+                  <polyline id="diskLine" fill="none" stroke="rgba(255, 59, 122, 0.85)" stroke-width="2" points=""></polyline>
+                </svg>
+              </div>
+            </div>
+
+            <div class="muted small-note" id="statusNote">Loading…</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='analytics.js') }}"></script>
+  </body>
+</html>
+

@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   </head>
 
-  <body>
+  <body data-selected-device="{{ selected_device or '' }}">
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -20,7 +20,7 @@
 
         <nav class="nav">
           <a class="nav-item active" href="{{ url_for('dashboard') }}">Dashboard</a>
-          <a class="nav-item disabled" href="#" title="Coming soon">Analytics</a>
+          <a class="nav-item" href="{{ url_for('analytics') }}">Analytics</a>
           <a class="nav-item disabled" href="#" title="Coming soon">Admin</a>
         </nav>
 
@@ -53,8 +53,8 @@
             <label class="field">
               <span class="field-label">Samples</span>
               <select name="limit" class="select">
-                {% for n in [25, 50, 100, 200, 500] %}
-                  <option value="{{ n }}">{{ n }}</option>
+                {% for n in [10, 25, 50, 75, 100] %}
+                  <option value="{{ n }}" {% if (selected_limit or 25) == n %}selected{% endif %}>{{ n }}</option>
                 {% endfor %}
               </select>
             </label>
@@ -105,7 +105,7 @@
             </div>
             <div class="card-foot">
               <div class="muted">
-                Avg (loaded): {% if summary and summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}%{% else %}—{% endif %}
+                Avg : {% if summary and summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}%{% else %}—{% endif %}
               </div>
             </div>
           </div>
@@ -126,7 +126,7 @@
             </div>
             <div class="card-foot">
               <div class="muted">
-                Avg (loaded): {% if summary and summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}%{% else %}—{% endif %}
+                Avg: {% if summary and summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}%{% else %}—{% endif %}
               </div>
             </div>
           </div>
@@ -191,7 +191,7 @@
               {% if summary and summary.count %}
                 <tfoot>
                   <tr>
-                    <td colspan="2" class="muted">Averages (loaded)</td>
+                    <td colspan="2" class="muted">Averages</td>
                     <td class="num muted">{% if summary.cpu_avg is not none %}{{ "%.1f"|format(summary.cpu_avg) }}{% else %}—{% endif %}</td>
                     <td class="num muted">{% if summary.memory_avg is not none %}{{ "%.1f"|format(summary.memory_avg) }}{% else %}—{% endif %}</td>
                     <td class="num muted">{% if summary.disk_avg is not none %}{{ "%.1f"|format(summary.disk_avg) }}{% else %}—{% endif %}</td>
@@ -204,11 +204,6 @@
       </main>
     </div>
 
-    <script>
-      window.__DASHBOARD__ = {
-        selectedDevice: {{ (selected_device or "")|tojson }},
-      };
-    </script>
     <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
   </body>
 </html>

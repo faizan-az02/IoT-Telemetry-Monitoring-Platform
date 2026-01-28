@@ -1,7 +1,13 @@
-async function fetchRecent(deviceId) {
+function getSelectedLimit() {
+  const select = document.querySelector('select[name="limit"]');
+  const val = select && select.value ? Number(select.value) : 25;
+  return Number.isFinite(val) && val > 0 ? String(val) : "25";
+}
+
+async function fetchRecent(deviceId, limit) {
   const params = new URLSearchParams();
   if (deviceId) params.set("device_id", deviceId);
-  params.set("limit", "50");
+  params.set("limit", limit || "25");
   const res = await fetch(`/api/telemetry/recent?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to load telemetry (${res.status})`);
   const json = await res.json();
@@ -43,8 +49,9 @@ function renderRows(rows) {
 }
 
 async function refresh() {
-  const deviceId = (window.__DASHBOARD__ && window.__DASHBOARD__.selectedDevice) || "";
-  const rows = await fetchRecent(deviceId);
+  const deviceId = (document.body && document.body.dataset && document.body.dataset.selectedDevice) || "";
+  const limit = getSelectedLimit();
+  const rows = await fetchRecent(deviceId, limit);
   renderRows(rows);
 }
 

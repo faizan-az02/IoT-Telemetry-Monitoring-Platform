@@ -1,12 +1,14 @@
 import os
 from datetime import datetime
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, url_for
 from pymongo import MongoClient
 
 
 def create_app() -> Flask:
     app = Flask(__name__)
+
+    MAX_LIMIT = 100
 
     mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
     mongo_db = os.getenv("MONGO_DB", "telemetry_db")
@@ -32,12 +34,13 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return render_template("dashboard.html")
+        # Default landing page: show latest 25 samples.
+        return redirect(url_for("dashboard"))
 
     @app.get("/dashboard")
     def dashboard():
         device_id = request.args.get("device_id")  # optional filter
-        limit = min(int(request.args.get("limit", "50")), 500)
+        limit = min(int(request.args.get("limit", "25")), MAX_LIMIT)
 
         query = {}
         if device_id:
@@ -81,9 +84,26 @@ def create_app() -> Flask:
             "dashboard.html",
             devices=devices,
             selected_device=device_id or "",
+            selected_limit=limit,
             latest=latest_metrics,
             rows=rows,
             summary=summary,
+        )
+
+    @app.get("/analytics")
+    def analytics():
+        device_id = request.args.get("device_id")  # optional filter
+        limit = min(int(request.args.get("limit", "50")), MAX_LIMIT)
+
+        # For initial render we just provide devices/selected values;
+        # charts/stats are computed client-side via /api/telemetry/recent.
+        devices = sorted(collection.distinct("device_id"))
+
+        return render_template(
+            "analytics.html",
+            devices=devices,
+            selected_device=device_id or "",
+            selected_limit=limit,
         )
 
     @app.get("/api/telemetry/latest")
@@ -96,7 +116,7 @@ def create_app() -> Flask:
     @app.get("/api/telemetry/recent")
     def api_recent():
         device_id = request.args.get("device_id")
-        limit = min(int(request.args.get("limit", "50")), 500)
+        limit = min(int(request.args.get("limit", "25")), MAX_LIMIT)
         query = {"device_id": device_id} if device_id else {}
         docs = list(collection.find(query).sort("timestamp", -1).limit(limit))
         return jsonify({"data": [_serialize_doc(d) for d in docs]})
