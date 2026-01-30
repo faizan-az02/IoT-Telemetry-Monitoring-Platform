@@ -50,7 +50,7 @@ def collect_telemetry(
 
         telemetry_data = {
             "device_id": device_id,
-            "cpu_usage (%)": psutil.cpu_percent(interval=1),
+            "cpu_usage (%)": psutil.cpu_percent(interval=5),
             "memory_usage (%)": psutil.virtual_memory().percent,
             "disk_usage (%)": psutil.disk_usage(disk_path).percent,
             "timestamp": now,
