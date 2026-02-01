@@ -1,12 +1,140 @@
-from pymongo import MongoClient
 import argparse
+import ctypes
 import os
 import time
 from datetime import datetime
 from typing import Callable, Optional
 
 import psutil
+from pymongo import MongoClient
 from pymongo.collection import Collection
+
+
+def _clamp_pct(x: float) -> float:
+    if x < 0:
+        return 0.0
+    if x > 100:
+        return 100.0
+    return x
+
+
+class _PdhDiskIdleCounter:
+    """
+    Windows PDH counter wrapper for:
+      \\PhysicalDisk(_Total)\\% Idle Time
+
+    Task Manager "Disk %" is roughly: 100 - % Idle Time
+    """
+
+    def __init__(self) -> None:
+        if os.name != "nt":
+            raise RuntimeError("PDH counter is only available on Windows")
+
+        self._pdh = ctypes.WinDLL("pdh.dll")
+        self._query = ctypes.c_void_p()
+        self._counter = ctypes.c_void_p()
+
+        # PDH constants
+        self._PDH_FMT_DOUBLE = 0x00000200
+
+        class _PDH_FMT_COUNTERVALUE(ctypes.Structure):
+            _fields_ = [
+                ("CStatus", ctypes.c_uint32),
+                # Union field for double; this layout works for PDH_FMT_DOUBLE.
+                ("doubleValue", ctypes.c_double),
+            ]
+
+        self._Value = _PDH_FMT_COUNTERVALUE
+
+        # Signatures
+        self._pdh.PdhOpenQueryW.argtypes = [ctypes.c_wchar_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+        self._pdh.PdhOpenQueryW.restype = ctypes.c_uint32
+
+        self._pdh.PdhAddEnglishCounterW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        self._pdh.PdhAddEnglishCounterW.restype = ctypes.c_uint32
+
+        self._pdh.PdhCollectQueryData.argtypes = [ctypes.c_void_p]
+        self._pdh.PdhCollectQueryData.restype = ctypes.c_uint32
+
+        self._pdh.PdhGetFormattedCounterValue.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_uint32),
+            ctypes.POINTER(self._Value),
+        ]
+        self._pdh.PdhGetFormattedCounterValue.restype = ctypes.c_uint32
+
+        self._pdh.PdhCloseQuery.argtypes = [ctypes.c_void_p]
+        self._pdh.PdhCloseQuery.restype = ctypes.c_uint32
+
+        status = self._pdh.PdhOpenQueryW(None, None, ctypes.byref(self._query))
+        if status != 0:
+            raise RuntimeError(f"PdhOpenQueryW failed: {status}")
+
+        path = r"\PhysicalDisk(_Total)\% Idle Time"
+        status = self._pdh.PdhAddEnglishCounterW(self._query, path, None, ctypes.byref(self._counter))
+        if status != 0:
+            self.close()
+            raise RuntimeError(f"PdhAddEnglishCounterW failed: {status}")
+
+        # Prime the counter (some counters need at least one collect).
+        self._pdh.PdhCollectQueryData(self._query)
+
+    def collect(self) -> None:
+        self._pdh.PdhCollectQueryData(self._query)
+
+    def get_idle_percent(self) -> float | None:
+        try:
+            typ = ctypes.c_uint32()
+            val = self._Value()
+            status = self._pdh.PdhGetFormattedCounterValue(
+                self._counter, self._PDH_FMT_DOUBLE, ctypes.byref(typ), ctypes.byref(val)
+            )
+            if status != 0:
+                return None
+            return float(val.doubleValue)
+        except Exception:
+            return None
+
+    def close(self) -> None:
+        if getattr(self, "_query", None):
+            try:
+                self._pdh.PdhCloseQuery(self._query)
+            except Exception:
+                pass
+            self._query = ctypes.c_void_p()
+            self._counter = ctypes.c_void_p()
+
+
+def _disk_active_percent_fallback(prev_io, cur_io, dt_sec: float) -> float:
+    """
+    Cross-platform fallback for disk "active time %".
+    Uses busy_time when available; else read_time+write_time.
+    """
+    try:
+        dt_ms = max(1.0, float(dt_sec) * 1000.0)
+        busy0 = getattr(prev_io, "busy_time", None)
+        busy1 = getattr(cur_io, "busy_time", None)
+        if busy0 is not None and busy1 is not None:
+            active_ms = float(busy1) - float(busy0)
+            return _clamp_pct((active_ms / dt_ms) * 100.0)
+
+        r0 = getattr(prev_io, "read_time", None)
+        w0 = getattr(prev_io, "write_time", None)
+        r1 = getattr(cur_io, "read_time", None)
+        w1 = getattr(cur_io, "write_time", None)
+        if None not in (r0, w0, r1, w1):
+            active_ms = (float(r1) - float(r0)) + (float(w1) - float(w0))
+            return _clamp_pct((active_ms / dt_ms) * 100.0)
+
+        return 0.0
+    except Exception:
+        return 0.0
 
 
 def collect_telemetry(
@@ -18,28 +146,29 @@ def collect_telemetry(
     on_progress: Optional[Callable[[int, int], None]] = None,
     stop_flag: Optional[Callable[[], bool]] = None,
 ) -> None:
-    """
-    Collect telemetry samples and write them to MongoDB.
 
-    - collection: pymongo collection to insert into
-    - dataset_size: number of samples
-    - time_interval: seconds to sleep between samples (after each insert)
-    - device_id: optional override (defaults to env DEVICE_ID or 'edge-1')
-    - on_log: optional callback for log lines
-    - on_progress: optional callback (current, total)
-    - stop_flag: optional callback returning True to stop early
-    """
     if dataset_size <= 0:
         raise ValueError("dataset_size must be > 0")
     if time_interval < 0:
         raise ValueError("time_interval must be >= 0")
 
     device_id = device_id or os.getenv("DEVICE_ID", "edge-1")
-    disk_path = os.path.abspath(os.sep)  # Windows-safe (e.g. C:\)
 
     def log(msg: str) -> None:
         if on_log:
             on_log(msg)
+
+    sample_sec = 1.0
+    psutil.cpu_percent(interval=None)  # prime
+
+    pdh = None
+    if os.name == "nt":
+        try:
+            pdh = _PdhDiskIdleCounter()
+        except Exception:
+            pdh = None
+
+    prev_io = psutil.disk_io_counters()
 
     for i in range(dataset_size):
         if stop_flag and stop_flag():
@@ -47,12 +176,33 @@ def collect_telemetry(
             return
 
         now = datetime.now()
+        # Start disk sampling window
+        if pdh:
+            pdh.collect()
+        io0 = prev_io
+        t0 = time.monotonic()
+
+        # CPU sampled over the same 1s window.
+        cpu_pct = psutil.cpu_percent(interval=sample_sec)
+
+        t1 = time.monotonic()
+        dt = max(0.001, t1 - t0)
+
+        # End disk sampling window
+        io1 = psutil.disk_io_counters()
+        prev_io = io1
+        if pdh:
+            pdh.collect()
+            idle = pdh.get_idle_percent()
+            disk_pct = _clamp_pct(100.0 - float(idle)) if idle is not None else _disk_active_percent_fallback(io0, io1, dt)
+        else:
+            disk_pct = _disk_active_percent_fallback(io0, io1, dt)
 
         telemetry_data = {
             "device_id": device_id,
-            "cpu_usage (%)": psutil.cpu_percent(interval=5),
+            "cpu_usage (%)": cpu_pct,
             "memory_usage (%)": psutil.virtual_memory().percent,
-            "disk_usage (%)": psutil.disk_usage(disk_path).percent,
+            "disk_usage (%)": round(float(disk_pct), 2),
             "timestamp": now,
             "datetime_str": now.strftime("%Y-%m-%d %H:%M:%S"),
         }
@@ -62,9 +212,6 @@ def collect_telemetry(
         current = i + 1
         if on_progress:
             on_progress(current, dataset_size)
-        # Only log per-sample updates when no progress callback is provided.
-        # The web UI renders progress via a progress bar, and the CLI can render
-        # progress with carriage returns.
         if not on_progress:
             log(f"Sample {current}/{dataset_size} collected.")
 
@@ -72,12 +219,14 @@ def collect_telemetry(
             time.sleep(time_interval)
 
     log("Telemetry data collection complete.")
+    if pdh:
+        pdh.close()
 
 
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Collect telemetry and write to MongoDB")
-    parser.add_argument("--dataset-size", type=int, required=True, help="Number of samples to collect")
-    parser.add_argument("--time-interval", type=float, required=True, help="Seconds between samples")
+    parser.add_argument("--dataset-size", type=int, default=25, help="Number of samples to collect (default: 25)")
+    parser.add_argument("--time-interval", type=float, default=1.0, help="Seconds between samples (default: 1.0)")
     parser.add_argument("--device-id", type=str, default=None, help="Device ID override")
     parser.add_argument("--mongo-uri", type=str, default=os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
     parser.add_argument("--mongo-db", type=str, default=os.getenv("MONGO_DB", "telemetry_db"))
