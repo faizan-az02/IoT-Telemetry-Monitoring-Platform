@@ -189,6 +189,44 @@ def create_app() -> Flask:
             selected_limit=limit,
         )
 
+    @app.get("/admin")
+    def admin():
+        devices = sorted(collection.distinct("device_id"))
+        total_records = collection.count_documents({})
+        latest = collection.find_one(sort=[("timestamp", -1)])
+        latest_ts = None
+        if latest:
+            ts = latest.get("datetime_str") or latest.get("timestamp")
+            if isinstance(ts, datetime):
+                latest_ts = ts.strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                latest_ts = str(ts) if ts is not None else None
+
+        cleared = request.args.get("cleared")
+        try:
+            cleared_count = int(cleared) if cleared is not None else None
+        except Exception:
+            cleared_count = None
+
+        return render_template(
+            "admin.html",
+            devices_count=len(devices),
+            mongo_db=os.getenv("MONGO_DB", "telemetry_db"),
+            mongo_collection=os.getenv("MONGO_COLLECTION", "telemetry_data"),
+            max_limit=MAX_LIMIT,
+            total_records=total_records,
+            latest_timestamp=latest_ts,
+            cleared_count=cleared_count,
+        )
+
+    @app.post("/admin/clear")
+    def admin_clear():
+        # Minimal safety: require an explicit confirm flag from the form.
+        if (request.form.get("confirm") or "").strip() != "1":
+            return jsonify({"error": "Confirmation required."}), 400
+        res = collection.delete_many({})
+        return redirect(url_for("admin", cleared=res.deleted_count))
+
     @app.get("/api/telemetry/latest")
     def api_latest():
         device_id = request.args.get("device_id")
