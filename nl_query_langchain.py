@@ -1,32 +1,5 @@
-"""
-LangChain playground (GitHub Models via OpenAI-compatible API): natural language -> SAFE Mongo query plan.
-
-This file is intentionally NOT wired into Flask yet.
-
-Why not "LLM generates arbitrary Python code"?
-----------------------------------------------
-Letting an LLM generate arbitrary Python to run against your DB is effectively
-remote code execution. Even if you say "parameterized", the model can still
-emit code that deletes data, reads files, or makes network calls.
-
-Instead, we ask the model to output a restricted JSON "plan" (validated),
-then we compile that plan into MongoDB query parts ourselves.
-
-Install:
-  pip install langchain langchain-openai pydantic pymongo
-
-Env (GitHub Models):
-  set GITHUB_MODELS_TOKEN=...        (your GitHub Models token)
-  set GITHUB_MODELS_ENDPOINT=https://models.inference.ai.azure.com   (optional)
-  set GITHUB_MODEL=gpt-4o-mini       (optional)
-
-Env (OpenAI direct, optional):
-  set OPENAI_API_KEY=...
-  set OPENAI_MODEL=gpt-4o-mini       (optional)
-"""
-
 from __future__ import annotations
-
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
@@ -34,13 +7,9 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
 
-# ---------------------------------------------------------------------------
-# TEMP TOKEN PLACEHOLDER (for local experimentation only)
-#
 # Prefer setting GITHUB_MODELS_TOKEN as an environment variable.
-# If you paste a token here, DO NOT commit it to git.
-# ---------------------------------------------------------------------------
-GITHUB_MODELS_TOKEN = ""  # <-- paste your GitHub Models token here temporarily (or leave blank to use env var)
+# (Kept as a fallback for local dev only; do not commit a real token.)
+GITHUB_MODELS_TOKEN = ""
 
 # GitHub Models OpenAI-compatible endpoint.
 GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
@@ -109,17 +78,24 @@ def _default_model() -> str:
     return os.getenv("GITHUB_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 
-def _parse_iso_to_utc_naive(iso: str) -> datetime:
+def _parse_iso_to_local_naive(iso: str) -> datetime:
     """
-    Parse ISO string to a UTC datetime, then convert to naive UTC.
-    This repo stores naive datetimes in Mongo (telemetry.py uses datetime.now()).
+    Parse ISO string and convert to *local* naive datetime.
+
+    IMPORTANT:
+    - `telemetry.py` stores timestamps as naive *local* datetimes (datetime.now()).
+    - So when the model outputs ISO timestamps with Z/+00:00, we must convert them
+      back to local time before querying Mongo, otherwise time-window queries like
+      "today" can exclude all rows.
     """
     s = iso.strip().replace("Z", "+00:00")
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    dt = dt.astimezone(timezone.utc)
-    return dt.replace(tzinfo=None)
+        # If it's naive, assume it's already local.
+        return dt
+    local_tz = datetime.now().astimezone().tzinfo
+    dt_local = dt.astimezone(local_tz) if local_tz else dt
+    return dt_local.replace(tzinfo=None)
 
 
 def _clamp_limit(limit: Optional[int], *, max_limit: int) -> int:
@@ -170,9 +146,9 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
     if plan.time and (plan.time.start or plan.time.end):
         rng: dict[str, Any] = {}
         if plan.time.start:
-            rng["$gte"] = _parse_iso_to_utc_naive(plan.time.start)
+            rng["$gte"] = _parse_iso_to_local_naive(plan.time.start)
         if plan.time.end:
-            rng["$lte"] = _parse_iso_to_utc_naive(plan.time.end)
+            rng["$lte"] = _parse_iso_to_local_naive(plan.time.end)
         q["timestamp"] = rng
 
     # Additional filters
@@ -186,8 +162,8 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
                 continue
             # timestamps are special: parse iso -> datetime
             if f.field == "timestamp":
-                v1 = _parse_iso_to_utc_naive(f.value)
-                v2 = _parse_iso_to_utc_naive(f.value2)
+                v1 = _parse_iso_to_local_naive(f.value)
+                v2 = _parse_iso_to_local_naive(f.value2)
                 # Merge with any existing timestamp range
                 _merge_op(field, "$gte", v1)
                 _merge_op(field, "$lte", v2)
@@ -205,7 +181,7 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
             continue
 
         if f.field == "timestamp":
-            v = _parse_iso_to_utc_naive(f.value)
+            v = _parse_iso_to_local_naive(f.value)
         elif f.field == "device_id":
             v = f.value
         else:
@@ -237,8 +213,6 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
         "bucket": plan.bucket,
         "rollup": plan.rollup,
     }
-
-
 @dataclass(frozen=True)
 class LangChainConfig:
     model: str
@@ -258,15 +232,6 @@ def build_chain(config: Optional[LangChainConfig] = None):
             "  pip install langchain-openai\n\n"
             "If you're using a virtualenv/conda env, make sure it's activated before installing."
         ) from e
-
-    # --- GitHub Models (OpenAI-compatible) ---
-    #
-    # GitHub Models uses an OpenAI-compatible API surface, but with:
-    # - base URL: https://models.inference.ai.azure.com
-    # - token: a GitHub Models token (NOT an OpenAI key)
-    #
-    # We configure via environment variables so langchain-openai + openai SDK use them.
-    import os
 
     token = os.getenv("GITHUB_MODELS_TOKEN") or GITHUB_MODELS_TOKEN
     endpoint = os.getenv("GITHUB_MODELS_ENDPOINT") or GITHUB_MODELS_ENDPOINT
@@ -299,8 +264,12 @@ def build_chain(config: Optional[LangChainConfig] = None):
         "Rules:\n"
         "- Read-only queries only. Never request updates/deletes.\n"
         "- If the user asks for 'all data', still use limit=100.\n"
-        "- Use ISO timestamps; prefer UTC with Z.\n"
+        "- Interpret relative time like 'today', 'yesterday', 'last N days' in the user's LOCAL time.\n"
+        "- Use ISO timestamps. Include timezone offset if you include a timezone.\n"
         "- Use cpu/memory/disk for thresholds.\n"
+        "- If the user asks for maximum/highest/peak, set rollup='max'.\n"
+        "- If the user asks for minimum/lowest, set rollup='min'.\n"
+        "- If the user asks for max/min without grouping, keep bucket='none'.\n"
     )
 
     # GitHub Models / OpenAI-compatible endpoints may reject strict JSON schema
@@ -334,7 +303,8 @@ def nl_to_mongo_query(
     """
     now_iso = None
     if now:
-        now_iso = now.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+        # Provide local time with offset so "today/yesterday" match local DB timestamps.
+        now_iso = now.astimezone().isoformat()
     invoke = build_chain(config=config)
     plan = invoke(text, now_iso=now_iso)
     compiled = compile_plan_to_mongo(plan, max_limit=max_limit)
@@ -468,36 +438,13 @@ def run_compiled_query(
     return out2
 
 
-if __name__ == "__main__":
-    # Playground: NL -> plan -> compiled query -> run against Mongo -> print results
-    import json as _json
-    import os as _os
-
-    prompt = input("Enter your query: ").strip()
-    if not prompt:
-        prompt = "Show me last 24 hours for device edge-1 where cpu > 60, newest first"
-    out = nl_to_mongo_query(prompt, max_limit=100, now=datetime.now(timezone.utc))
-
-    print("\nPROMPT:")
-    print(prompt)
-
-    print("PLAN:")
-    print(out["plan"].model_dump_json(indent=2))
-
-    print("\nCOMPILED:")
-    compiled = dict(out["compiled"])
-    f = compiled.get("filter", {})
-    # JSON-print friendly
-    if isinstance(f, dict) and "timestamp" in f and isinstance(f["timestamp"], dict):
-        ts = f["timestamp"]
-        compiled["filter"] = {**f, "timestamp": {k: v.isoformat() for k, v in ts.items()}}
-    print(_json.dumps(compiled, indent=2))
-
-    mongo_uri = _os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    mongo_db = _os.getenv("MONGO_DB", "telemetry_db")
-    mongo_collection = _os.getenv("MONGO_COLLECTION", "telemetry_data")
-
-    rows = run_compiled_query(out["compiled"], mongo_uri=mongo_uri, mongo_db=mongo_db, mongo_collection=mongo_collection)
-    print(f"\nRESULTS: {len(rows)} document(s)\n")
-    print(_json.dumps(rows, indent=2, default=str))
+__all__ = [
+    "NLQueryPlan",
+    "FilterClause",
+    "TimeRange",
+    "LangChainConfig",
+    "build_chain",
+    "nl_to_mongo_query",
+    "compile_plan_to_mongo",
+]
 

@@ -269,7 +269,7 @@ def create_app() -> Flask:
             return jsonify({"error": "NL query module unavailable.", "details": str(e)}), 500
 
         try:
-            out = nl_to_mongo_query(text, max_limit=MAX_LIMIT, now=datetime.utcnow())
+            out = nl_to_mongo_query(text, max_limit=MAX_LIMIT, now=datetime.now().astimezone())
             plan = out["plan"]
             compiled = out["compiled"]
         except Exception as e:

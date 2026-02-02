@@ -78,6 +78,27 @@ function td(text, className) {
   return el;
 }
 
+function resetNlTable() {
+  const head = document.getElementById("nlTableHead");
+  const body = document.getElementById("nlTableBody");
+  if (!head || !body) return;
+  head.innerHTML = `
+    <tr>
+      <th class="col-idx">#</th>
+      <th>Timestamp</th>
+      <th>Device</th>
+      <th class="num">CPU (%)</th>
+      <th class="num">Memory (%)</th>
+      <th class="num">Disk (%)</th>
+    </tr>
+  `;
+  body.innerHTML = `
+    <tr>
+      <td colspan="6" class="empty">Run an AI query to see results here.</td>
+    </tr>
+  `;
+}
+
 function renderNlTable(json) {
   const head = document.getElementById("nlTableHead");
   const body = document.getElementById("nlTableBody");
@@ -397,6 +418,13 @@ document.addEventListener("DOMContentLoaded", () => {
         const status = qs("#statusNote");
         if (status) status.textContent = `Error: ${e.message}`;
       });
+    });
+  }
+
+  const clearBtn = qs("#nlClearBtn");
+  if (clearBtn) {
+    clearBtn.addEventListener("click", () => {
+      resetNlTable();
     });
   }
 });
