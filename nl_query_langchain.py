@@ -32,6 +32,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
+from pymongo import MongoClient
 
 # ---------------------------------------------------------------------------
 # TEMP TOKEN PLACEHOLDER (for local experimentation only)
@@ -144,6 +145,24 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
     limit = _clamp_limit(plan.limit, max_limit=max_limit)
     q: dict[str, Any] = {}
 
+    def _merge_op(field_name: str, op: str, val: Any) -> None:
+        """
+        Merge an operator condition into q[field_name] without overwriting existing operators.
+        Example:
+          timestamp gte + lt should become {"$gte": ..., "$lt": ...}
+        """
+        existing = q.get(field_name)
+        if existing is None:
+            q[field_name] = {op: val}
+            return
+        if isinstance(existing, dict):
+            existing[op] = val
+            q[field_name] = existing
+            return
+        # If an equality value already exists, keep it (conservative).
+        # In practice we shouldn't mix equality + range for the same field in this playground.
+        q[field_name] = existing
+
     if plan.device_id:
         q["device_id"] = plan.device_id
 
@@ -169,14 +188,17 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
             if f.field == "timestamp":
                 v1 = _parse_iso_to_utc_naive(f.value)
                 v2 = _parse_iso_to_utc_naive(f.value2)
-                q[field] = {"$gte": v1, "$lte": v2}
+                # Merge with any existing timestamp range
+                _merge_op(field, "$gte", v1)
+                _merge_op(field, "$lte", v2)
             else:
                 try:
                     v1n = float(f.value)
                     v2n = float(f.value2)
                 except Exception:
                     continue
-                q[field] = {"$gte": v1n, "$lte": v2n}
+                _merge_op(field, "$gte", v1n)
+                _merge_op(field, "$lte", v2n)
             continue
 
         if f.value is None:
@@ -204,7 +226,7 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
         if mongo_op is None:
             q[field] = v
         else:
-            q[field] = {mongo_op: v}
+            _merge_op(field, mongo_op, v)
 
     sort_dir = 1 if plan.sort == "asc" else -1
 
@@ -319,12 +341,145 @@ def nl_to_mongo_query(
     return {"plan": plan, "compiled": compiled}
 
 
-if __name__ == "__main__":
-    # Dry-run playground (no DB). Prints the plan + compiled query.
-    import json as _json
+def run_compiled_query(
+    compiled: dict[str, Any],
+    *,
+    mongo_uri: str,
+    mongo_db: str,
+    mongo_collection: str,
+) -> list[dict[str, Any]]:
+    """
+    Execute the compiled query against MongoDB and return result documents.
 
-    prompt = "Show me last 24 hours for device edge-1 where cpu > 60, newest first"
+    Supports:
+    - bucket="none": simple find/sort/limit (raw documents)
+    - bucket in {"1m","5m","1h","1d"}: aggregation pipeline returning bucketed rollups
+    """
+    flt = compiled.get("filter") or {}
+    sort = compiled.get("sort") or ("timestamp", -1)
+    limit = int(compiled.get("limit") or 100)
+    bucket = compiled.get("bucket") or "none"
+    rollup = compiled.get("rollup") or "avg"
+
+    client = MongoClient(mongo_uri)
+    col = client[mongo_db][mongo_collection]
+
+    # Summary mode: if user asked for max/min (rollup != avg) without bucketing,
+    # return a single aggregate row (max/min over the matching window).
+    if (bucket in (None, "none")) and (rollup in {"max", "min"}):
+        op = "$max" if rollup == "max" else "$min"
+
+        def _conv(field: str):
+            return {"$convert": {"input": f"${field}", "to": "double", "onError": None, "onNull": None}}
+
+        pipeline = [
+            {"$match": flt},
+            {
+                "$group": {
+                    "_id": None,
+                    "count": {"$sum": 1},
+                    "cpu": {op: _conv("cpu_usage (%)")},
+                    "memory": {op: _conv("memory_usage (%)")},
+                    "disk": {op: _conv("disk_usage (%)")},
+                }
+            },
+        ]
+        rows = list(col.aggregate(pipeline))
+        r = rows[0] if rows else {}
+        return [
+            {
+                "count": int(r.get("count") or 0),
+                "cpu": r.get("cpu"),
+                "memory": r.get("memory"),
+                "disk": r.get("disk"),
+                "rollup_selected": rollup,
+            }
+        ]
+
+    if bucket in (None, "none"):
+        docs = list(col.find(flt).sort(sort[0], int(sort[1])).limit(limit))
+        out: list[dict[str, Any]] = []
+        for d in docs:
+            dd = dict(d)
+            if "_id" in dd:
+                dd["_id"] = str(dd["_id"])
+            ts = dd.get("timestamp")
+            if isinstance(ts, datetime):
+                dd["timestamp"] = ts.isoformat()
+            out.append(dd)
+        return out
+
+    bucket_ms_map = {"1m": 60_000, "5m": 300_000, "1h": 3_600_000, "1d": 86_400_000}
+    if bucket not in bucket_ms_map:
+        raise ValueError(f"Unsupported bucket: {bucket}")
+
+    bucket_ms = bucket_ms_map[bucket]
+    sort_dir = int(sort[1]) if isinstance(sort, (list, tuple)) and len(sort) >= 2 else -1
+
+    bucket_expr = {
+        "$toDate": {
+            "$subtract": [
+                {"$toLong": "$timestamp"},
+                {"$mod": [{"$toLong": "$timestamp"}, bucket_ms]},
+            ]
+        }
+    }
+
+    def _conv(field: str):
+        return {"$convert": {"input": f"${field}", "to": "double", "onError": None, "onNull": None}}
+
+    pipeline = [
+        {"$match": flt},
+        {
+            "$group": {
+                "_id": bucket_expr,
+                "count": {"$sum": 1},
+                "cpu_avg": {"$avg": _conv("cpu_usage (%)")},
+                "cpu_min": {"$min": _conv("cpu_usage (%)")},
+                "cpu_max": {"$max": _conv("cpu_usage (%)")},
+                "memory_avg": {"$avg": _conv("memory_usage (%)")},
+                "memory_min": {"$min": _conv("memory_usage (%)")},
+                "memory_max": {"$max": _conv("memory_usage (%)")},
+                "disk_avg": {"$avg": _conv("disk_usage (%)")},
+                "disk_min": {"$min": _conv("disk_usage (%)")},
+                "disk_max": {"$max": _conv("disk_usage (%)")},
+            }
+        },
+        {"$sort": {"_id": sort_dir}},
+        {"$limit": limit},
+    ]
+
+    rows = list(col.aggregate(pipeline))
+    out2: list[dict[str, Any]] = []
+    for r in rows:
+        ts = r.get("_id")
+        if isinstance(ts, datetime):
+            ts = ts.isoformat()
+        out2.append(
+            {
+                "timestamp": ts,
+                "count": int(r.get("count") or 0),
+                "cpu": {"avg": r.get("cpu_avg"), "min": r.get("cpu_min"), "max": r.get("cpu_max")},
+                "memory": {"avg": r.get("memory_avg"), "min": r.get("memory_min"), "max": r.get("memory_max")},
+                "disk": {"avg": r.get("disk_avg"), "min": r.get("disk_min"), "max": r.get("disk_max")},
+                "rollup_selected": rollup,
+            }
+        )
+    return out2
+
+
+if __name__ == "__main__":
+    # Playground: NL -> plan -> compiled query -> run against Mongo -> print results
+    import json as _json
+    import os as _os
+
+    prompt = input("Enter your query: ").strip()
+    if not prompt:
+        prompt = "Show me last 24 hours for device edge-1 where cpu > 60, newest first"
     out = nl_to_mongo_query(prompt, max_limit=100, now=datetime.now(timezone.utc))
+
+    print("\nPROMPT:")
+    print(prompt)
 
     print("PLAN:")
     print(out["plan"].model_dump_json(indent=2))
@@ -337,4 +492,12 @@ if __name__ == "__main__":
         ts = f["timestamp"]
         compiled["filter"] = {**f, "timestamp": {k: v.isoformat() for k, v in ts.items()}}
     print(_json.dumps(compiled, indent=2))
+
+    mongo_uri = _os.getenv("MONGO_URI", "mongodb://localhost:27017/")
+    mongo_db = _os.getenv("MONGO_DB", "telemetry_db")
+    mongo_collection = _os.getenv("MONGO_COLLECTION", "telemetry_data")
+
+    rows = run_compiled_query(out["compiled"], mongo_uri=mongo_uri, mongo_db=mongo_db, mongo_collection=mongo_collection)
+    print(f"\nRESULTS: {len(rows)} document(s)\n")
+    print(_json.dumps(rows, indent=2, default=str))
 

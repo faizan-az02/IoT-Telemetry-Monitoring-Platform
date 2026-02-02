@@ -153,6 +153,54 @@
             <div class="muted small-note" id="statusNote">Loading…</div>
           </div>
         </section>
+
+        <section class="panel" style="margin-top: 14px;">
+          <div class="panel-head">
+            <h2 class="panel-title">Query the database</h2>
+            <div class="panel-actions">
+              <button class="btn" type="button" id="nlRunBtn">Run</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <label class="field" style="width: 100%;">
+              <span class="field-label">Query</span>
+              <textarea
+                class="input"
+                id="nlPrompt"
+                placeholder="e.g. maximum CPU usage today; show last 3 days avg memory for device edge-1; cpu between 20 and 50 yesterday"
+                style="width: 100%; min-height: 44px; resize: vertical;"
+              ></textarea>
+            </label>
+            <div class="muted small-note">
+              This uses an LLM to generate a safe query plan, then executes it server-side (results capped).
+            </div>
+          </div>
+        </section>
+
+        <section class="panel" style="margin-top: 14px;">
+          <div class="panel-head">
+            <h2 class="panel-title">Query results</h2>
+          </div>
+          <div class="table-wrap">
+            <table class="table" aria-label="Analytics query results">
+              <thead id="nlTableHead">
+                <tr>
+                  <th class="col-idx">#</th>
+                  <th>Timestamp</th>
+                  <th>Device</th>
+                  <th class="num">CPU (%)</th>
+                  <th class="num">Memory (%)</th>
+                  <th class="num">Disk (%)</th>
+                </tr>
+              </thead>
+              <tbody id="nlTableBody">
+                <tr>
+                  <td colspan="6" class="empty">Run an AI query to see results here.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </main>
     </div>
 
