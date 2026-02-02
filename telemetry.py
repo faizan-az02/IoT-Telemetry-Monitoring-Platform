@@ -9,6 +9,7 @@ import psutil
 from pymongo import MongoClient
 from pymongo.collection import Collection
 
+from config import get as env_get
 
 def _clamp_pct(x: float) -> float:
     if x < 0:
@@ -152,7 +153,7 @@ def collect_telemetry(
     if time_interval < 0:
         raise ValueError("time_interval must be >= 0")
 
-    device_id = device_id or os.getenv("DEVICE_ID", "edge-1")
+    device_id = device_id or env_get("DEVICE_NAME", env_get("DEVICE_NAME", "edge-1"))
 
     def log(msg: str) -> None:
         if on_log:
@@ -228,9 +229,9 @@ def _main() -> int:
     parser.add_argument("--dataset-size", type=int, default=25, help="Number of samples to collect (default: 25)")
     parser.add_argument("--time-interval", type=float, default=1.0, help="Seconds between samples (default: 1.0)")
     parser.add_argument("--device-id", type=str, default=None, help="Device ID override")
-    parser.add_argument("--mongo-uri", type=str, default=os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
-    parser.add_argument("--mongo-db", type=str, default=os.getenv("MONGO_DB", "telemetry_db"))
-    parser.add_argument("--mongo-collection", type=str, default=os.getenv("MONGO_COLLECTION", "telemetry_data"))
+    parser.add_argument("--mongo-uri", type=str, default=env_get("MONGO_URI", "mongodb://localhost:27017/"))
+    parser.add_argument("--mongo-db", type=str, default=env_get("MONGO_DB", "telemetry_db"))
+    parser.add_argument("--mongo-collection", type=str, default=env_get("MONGO_COLLECTION", "telemetry_data"))
     args = parser.parse_args()
 
     client = MongoClient(args.mongo_uri)

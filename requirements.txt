@@ -1,0 +1,7 @@
+flask
+pymongo
+langchain
+langchain-openai
+psutil
+pydantic
+openai

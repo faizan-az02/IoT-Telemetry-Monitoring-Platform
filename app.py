@@ -1,13 +1,12 @@
 import json
-import os
 import queue
 import threading
 import time
 import uuid
 from datetime import datetime
-
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 from pymongo import MongoClient
+from config import get as env_get, get_bool as env_get_bool, get_int as env_get_int
 
 
 def create_app() -> Flask:
@@ -17,9 +16,9 @@ def create_app() -> Flask:
     MAX_COLLECT_SAMPLES = 1000
     MAX_COLLECT_INTERVAL_SEC = 60 * 60
 
-    mongo_uri = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-    mongo_db = os.getenv("MONGO_DB", "telemetry_db")
-    mongo_collection = os.getenv("MONGO_COLLECTION", "telemetry_data")
+    mongo_uri = env_get("MONGO_URI", "mongodb://localhost:27017/")
+    mongo_db = env_get("MONGO_DB", "telemetry_db")
+    mongo_collection = env_get("MONGO_COLLECTION", "telemetry_data")
 
     client = MongoClient(mongo_uri)
     collection = client[mongo_db][mongo_collection]
@@ -40,7 +39,7 @@ def create_app() -> Flask:
     def _start_collect_job(dataset_size: int, time_interval: float, device_id: str | None) -> str:
         job_id = uuid.uuid4().hex
         q: queue.Queue[tuple[str, str]] = queue.Queue()
-        resolved_device_id = device_id or os.getenv("DEVICE_ID", "edge-1")
+        resolved_device_id = device_id or env_get("DEVICE_NAME", env_get("DEVICE_ID", "not_found"))
 
         with jobs_lock:
             jobs[job_id] = {
@@ -222,8 +221,8 @@ def create_app() -> Flask:
         return render_template(
             "admin.html",
             devices_count=len(devices),
-            mongo_db=os.getenv("MONGO_DB", "telemetry_db"),
-            mongo_collection=os.getenv("MONGO_COLLECTION", "telemetry_data"),
+            mongo_db=env_get("MONGO_DB", "telemetry_db"),
+            mongo_collection=env_get("MONGO_COLLECTION", "telemetry_data"),
             max_limit=MAX_LIMIT,
             total_records=total_records,
             latest_timestamp=latest_ts,
@@ -409,7 +408,7 @@ def create_app() -> Flask:
         return render_template(
             "collect.html",
             devices=devices,
-            default_device=os.getenv("DEVICE_ID", "edge-1"),
+            default_device=env_get("DEVICE_NAME", env_get("DEVICE_ID", "edge-1")),
             default_dataset_size=25,
             default_time_interval=1,
         )
@@ -474,9 +473,9 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    # Use FLASK_DEBUG=1 for debug; host/port configurable via env.
-    host = os.getenv("FLASK_HOST", "127.0.0.1")
-    port = int(os.getenv("FLASK_PORT", "5000"))
-    debug = os.getenv("FLASK_DEBUG", "").strip() in {"1", "true", "True", "yes", "YES"}
-    app.run(host=host, port=port, debug=False)
+    # Host/port/debug configured via `.env` (see config.py)
+    host = env_get("FLASK_HOST", "127.0.0.1")
+    port = int(env_get("FLASK_PORT", "5000") or "5000")
+    debug = env_get_bool("FLASK_DEBUG", False)
+    app.run(host=host, port=port, debug=bool(debug))
 
