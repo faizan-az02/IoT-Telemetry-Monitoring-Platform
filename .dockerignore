@@ -1,2 +1,19 @@
-# TODO: Add ignore patterns (e.g. __pycache__/, .git/, node_modules/, etc).
+__pycache__/
+*.py[cod]
+*.pyo
+
+.git/
+.gitignore
+
+# Local secrets
+.env
+.env.docker
+
+# Local tooling/editor
+.vscode/
+.idea/
+
+# OS noise
+Thumbs.db
+.DS_Store
 

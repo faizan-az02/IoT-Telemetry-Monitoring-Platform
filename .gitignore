@@ -1,5 +1,6 @@
 # Secrets / local env
 .env
+.env.docker
 
 # Python
 __pycache__/

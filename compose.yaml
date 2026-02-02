@@ -1,2 +1,22 @@
-# TODO: Add Docker Compose config step-by-step.
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+
+  web:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "5000:5000"
+
+    volumes:
+      - ./.env.docker:/app/.env:ro
+
+volumes:
+  mongo_data:
 
