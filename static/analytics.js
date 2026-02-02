@@ -2,10 +2,6 @@ function qs(sel) {
   return document.querySelector(sel);
 }
 
-function getSelectedDevice() {
-  return (document.body && document.body.dataset && document.body.dataset.selectedDevice) || "";
-}
-
 function getSelectedLimit() {
   const select = document.querySelector('select[name="limit"]');
   const val = select && select.value ? Number(select.value) : Number(document.body.dataset.selectedLimit || 100);
@@ -15,7 +11,6 @@ function getSelectedLimit() {
 
 async function fetchRecent(deviceId, limit) {
   const params = new URLSearchParams();
-  if (deviceId) params.set("device_id", deviceId);
   params.set("limit", limit || "100");
   const res = await fetch(`/api/telemetry/recent?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to load telemetry (${res.status})`);
@@ -25,7 +20,6 @@ async function fetchRecent(deviceId, limit) {
 
 async function fetchNlQuery(text, deviceId, limit) {
   const payload = { text: text || "" };
-  if (deviceId) payload.device_id = deviceId;
   if (limit) payload.limit = limit;
 
   const res = await fetch("/api/telemetry/nl_query", {
@@ -78,6 +72,18 @@ function td(text, className) {
   return el;
 }
 
+function formatTimeValue(v) {
+  if (!v) return "—";
+  if (typeof v !== "string") return String(v);
+  const d = new Date(v);
+  if (!Number.isNaN(d.getTime())) return d.toLocaleString();
+  return v;
+}
+
+function formatRowTime(r) {
+  return formatTimeValue(r && r.timestamp);
+}
+
 function resetNlTable() {
   const head = document.getElementById("nlTableHead");
   const body = document.getElementById("nlTableBody");
@@ -86,7 +92,7 @@ function resetNlTable() {
     <tr>
       <th class="col-idx">#</th>
       <th>Timestamp</th>
-      <th>Device</th>
+      <th>Collector</th>
       <th class="num">CPU (%)</th>
       <th class="num">Memory (%)</th>
       <th class="num">Disk (%)</th>
@@ -115,7 +121,7 @@ function renderNlTable(json) {
   if (!rows.length) {
     const tr = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = mode === "summary" ? 2 : mode === "bucketed" ? 6 : 6;
     cell.className = "empty";
     cell.textContent = "No rows returned for this query.";
     tr.appendChild(cell);
@@ -138,7 +144,7 @@ function renderNlTable(json) {
     for (const r of rows) {
       const tr = document.createElement("tr");
       tr.appendChild(td(String(idx), "col-idx"));
-      tr.appendChild(td(r.timestamp || "—", "mono"));
+      tr.appendChild(td(formatTimeValue(r.timestamp || "—"), "mono"));
       tr.appendChild(td(String(r.count ?? "—"), "num"));
       tr.appendChild(td(r.cpu && r.cpu[rollup] != null ? Number(r.cpu[rollup]).toFixed(2) : "—", "num"));
       tr.appendChild(td(r.memory && r.memory[rollup] != null ? Number(r.memory[rollup]).toFixed(2) : "—", "num"));
@@ -177,7 +183,7 @@ function renderNlTable(json) {
     <tr>
       <th class="col-idx">#</th>
       <th>Timestamp</th>
-      <th>Device</th>
+      <th>Collector</th>
       <th class="num">CPU (%)</th>
       <th class="num">Memory (%)</th>
       <th class="num">Disk (%)</th>
@@ -187,8 +193,8 @@ function renderNlTable(json) {
   for (const r of rows) {
     const tr = document.createElement("tr");
     tr.appendChild(td(String(idx), "col-idx"));
-    tr.appendChild(td(r.datetime_str || r.timestamp || "—", "mono"));
-    tr.appendChild(td(r.device_id || "—", "mono"));
+    tr.appendChild(td(formatRowTime(r), "mono"));
+    tr.appendChild(td(r.collector || "—", "mono"));
     tr.appendChild(td(r["cpu_usage (%)"] ?? "—", "num"));
     tr.appendChild(td(r["memory_usage (%)"] ?? "—", "num"));
     tr.appendChild(td(r["disk_usage (%)"] ?? "—", "num"));
@@ -291,9 +297,8 @@ async function runNlAnalytics() {
   if (status) status.textContent = "Thinking…";
   if (btn) btn.disabled = true;
   try {
-    const deviceId = getSelectedDevice();
     const limit = getSelectedLimit();
-    const json = await fetchNlQuery(text, deviceId, limit);
+    const json = await fetchNlQuery(text, "", limit);
     const norm = normalizeNlResult(json);
     renderNlTable(json);
 
@@ -315,14 +320,16 @@ async function runNlAnalytics() {
       setText("diskStat", diskS ? `${fmt(diskS.avg)} / ${fmt(diskS.min)} / ${fmt(diskS.max)}` : "—");
     }
 
-    setText("cpuMeta", deviceId ? `Device: ${deviceId}` : "Device: all");
+    setText("cpuMeta", "Source: MongoDB");
     setText("memMeta", `Mode: ${norm.mode}`);
     setText("diskMeta", norm.bucket && norm.bucket !== "none" ? `bucket=${norm.bucket} (${norm.rollup})` : `rollup=${norm.rollup}`);
 
     setText("countStat", String(norm.count));
     setText(
       "timeMeta",
-      norm.newest || norm.oldest ? `Window: ${norm.newest || "—"} → ${norm.oldest || "—"}` : "Window: —"
+      norm.newest || norm.oldest
+        ? `Window: ${formatTimeValue(norm.newest || "—")} → ${formatTimeValue(norm.oldest || "—")}`
+        : "Window: —"
     );
 
     const cpuPts = polylinePoints(cpu, 300, 64, 6);
@@ -349,10 +356,9 @@ async function loadAnalytics() {
   const status = qs("#statusNote");
   if (status) status.textContent = "Loading…";
 
-  const deviceId = getSelectedDevice();
   const limit = getSelectedLimit();
 
-  const rows = await fetchRecent(deviceId, limit);
+  const rows = await fetchRecent("", limit);
   // API returns newest first; keep that order for "most recent → oldest".
 
   const cpu = rows.map((r) => toNumber(r["cpu_usage (%)"]));
@@ -367,14 +373,14 @@ async function loadAnalytics() {
   setText("memStat", memS ? `${fmt(memS.avg)} / ${fmt(memS.min)} / ${fmt(memS.max)}` : "—");
   setText("diskStat", diskS ? `${fmt(diskS.avg)} / ${fmt(diskS.min)} / ${fmt(diskS.max)}` : "—");
 
-  setText("cpuMeta", deviceId ? `Device: ${deviceId}` : "Device: all");
+  setText("cpuMeta", "Source: MongoDB");
   setText("memMeta", `N capped at 100`);
   setText("diskMeta", `N capped at 100`);
   setText("countStat", String(rows.length));
 
   const newest = rows[0] && (rows[0].datetime_str || rows[0].timestamp);
   const oldest = rows[rows.length - 1] && (rows[rows.length - 1].datetime_str || rows[rows.length - 1].timestamp);
-  setText("timeMeta", rows.length ? `Window: ${newest || "—"} → ${oldest || "—"}` : "No data");
+  setText("timeMeta", rows.length ? `Window: ${formatTimeValue(newest || "—")} → ${formatTimeValue(oldest || "—")}` : "No data");
 
   const cpuPts = polylinePoints(cpu, 300, 64, 6);
   const memPts = polylinePoints(mem, 300, 64, 6);

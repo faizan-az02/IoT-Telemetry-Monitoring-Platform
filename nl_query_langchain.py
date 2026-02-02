@@ -1,5 +1,4 @@
 from __future__ import annotations
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
@@ -7,12 +6,11 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 from pymongo import MongoClient
 
-# Prefer setting GITHUB_MODELS_TOKEN as an environment variable.
-# (Kept as a fallback for local dev only; do not commit a real token.)
-GITHUB_MODELS_TOKEN = ""
+# Config is loaded from the repo's `.env` file (in Docker, we mount `.env.docker` to `/app/.env`).
+from config import get as env_get
 
-# GitHub Models OpenAI-compatible endpoint.
-GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
+# GitHub Models OpenAI-compatible endpoint default.
+DEFAULT_GITHUB_MODELS_ENDPOINT = "https://models.inference.ai.azure.com"
 
 # ---- Defaults ----
 DEFAULT_MAX_LIMIT = 100
@@ -40,7 +38,7 @@ class TimeRange(BaseModel):
 
 class FilterClause(BaseModel):
     # We only permit the fields you actually store.
-    field: Literal["device_id", "timestamp", "cpu", "memory", "disk"]
+    field: Literal["collector", "timestamp", "cpu", "memory", "disk"]
     op: Op
     # IMPORTANT: Keep these as strings for LLM schema compatibility.
     # We'll parse to float/datetime in compile_plan_to_mongo() based on `field`.
@@ -53,7 +51,6 @@ class NLQueryPlan(BaseModel):
     Restricted plan that can be safely compiled to Mongo queries/pipelines.
     """
 
-    device_id: Optional[str] = Field(default=None, description="Exact device_id match (optional)")
     time: Optional[TimeRange] = Field(default=None, description="Optional ISO time window")
     filters: list[FilterClause] = Field(default_factory=list, description="Additional filters")
     sort: SortDir = Field(default="desc", description="Sort by timestamp")
@@ -64,7 +61,7 @@ class NLQueryPlan(BaseModel):
 
 # ---- Mapping from plan fields to your Mongo schema ----
 PLAN_FIELD_TO_MONGO_FIELD = {
-    "device_id": "device_id",
+    "collector": "collector",
     "timestamp": "timestamp",
     "cpu": "cpu_usage (%)",
     "memory": "memory_usage (%)",
@@ -73,9 +70,7 @@ PLAN_FIELD_TO_MONGO_FIELD = {
 
 
 def _default_model() -> str:
-    import os
-
-    return os.getenv("GITHUB_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    return env_get("GITHUB_MODEL", env_get("OPENAI_MODEL", "gpt-4o-mini")) or "gpt-4o-mini"
 
 
 def _parse_iso_to_local_naive(iso: str) -> datetime:
@@ -139,9 +134,6 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
         # In practice we shouldn't mix equality + range for the same field in this playground.
         q[field_name] = existing
 
-    if plan.device_id:
-        q["device_id"] = plan.device_id
-
     # Time range
     if plan.time and (plan.time.start or plan.time.end):
         rng: dict[str, Any] = {}
@@ -182,8 +174,8 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
 
         if f.field == "timestamp":
             v = _parse_iso_to_local_naive(f.value)
-        elif f.field == "device_id":
-            v = f.value
+        elif f.field == "collector":
+            v = str(f.value)
         else:
             try:
                 v = float(f.value)
@@ -233,19 +225,17 @@ def build_chain(config: Optional[LangChainConfig] = None):
             "If you're using a virtualenv/conda env, make sure it's activated before installing."
         ) from e
 
-    token = os.getenv("GITHUB_MODELS_TOKEN") or GITHUB_MODELS_TOKEN
-    endpoint = os.getenv("GITHUB_MODELS_ENDPOINT") or GITHUB_MODELS_ENDPOINT
+    token = (env_get("GITHUB_MODELS_TOKEN", "") or "").strip()
+    endpoint = (env_get("GITHUB_MODELS_ENDPOINT", DEFAULT_GITHUB_MODELS_ENDPOINT) or DEFAULT_GITHUB_MODELS_ENDPOINT).strip()
 
     if not token:
         raise RuntimeError(
             "Missing GitHub Models token.\n\n"
-            "Set it in PowerShell (current session):\n"
-            "  $env:GITHUB_MODELS_TOKEN = \"github_...\"\n"
-            "  $env:GITHUB_MODEL = \"gpt-4o-mini\"   # optional\n"
-            "  python nl_query_langchain.py\n\n"
-            "Or set permanently:\n"
-            "  setx GITHUB_MODELS_TOKEN \"github_...\"\n"
-            "Then restart your terminal/IDE."
+            "Set `GITHUB_MODELS_TOKEN` in your `.env.docker` file (not committed), then restart Docker Compose.\n\n"
+            "Example `.env.docker`:\n"
+            "  GITHUB_MODELS_TOKEN=github_pat_...\n"
+            "  GITHUB_MODEL=gpt-4o-mini\n"
+            "  GITHUB_MODELS_ENDPOINT=https://models.inference.ai.azure.com\n"
         )
 
     cfg = config or LangChainConfig(model=_default_model())
@@ -256,7 +246,7 @@ def build_chain(config: Optional[LangChainConfig] = None):
         "You translate plain-English analytics requests into a STRICT JSON plan.\n"
         "You MUST follow the provided JSON schema exactly.\n"
         "You are querying MongoDB telemetry documents with fields:\n"
-        "- device_id (string)\n"
+        "- collector (string: 'Host' or 'Docker')\n"
         "- timestamp (datetime)\n"
         "- cpu_usage (%) (number)\n"
         "- memory_usage (%) (number)\n"

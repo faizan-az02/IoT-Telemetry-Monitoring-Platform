@@ -6,7 +6,6 @@ function getSelectedLimit() {
 
 async function fetchRecent(deviceId, limit) {
   const params = new URLSearchParams();
-  if (deviceId) params.set("device_id", deviceId);
   params.set("limit", limit || "25");
   const res = await fetch(`/api/telemetry/recent?${params.toString()}`);
   if (!res.ok) throw new Error(`Failed to load telemetry (${res.status})`);
@@ -19,6 +18,14 @@ function td(text, className) {
   if (className) el.className = className;
   el.textContent = text ?? "—";
   return el;
+}
+
+function fmtLocalTimestamp(iso) {
+  if (!iso) return "—";
+  if (typeof iso !== "string") return String(iso);
+  const d = new Date(iso);
+  if (!Number.isNaN(d.getTime())) return d.toLocaleString();
+  return iso;
 }
 
 function renderRows(rows) {
@@ -41,8 +48,8 @@ function renderRows(rows) {
   for (const r of rows) {
     const tr = document.createElement("tr");
     tr.appendChild(td(String(idx), "col-idx"));
-    tr.appendChild(td(r.datetime_str || r.timestamp || "—", "mono"));
-    tr.appendChild(td(r.device_id || "—", "mono"));
+    tr.appendChild(td(fmtLocalTimestamp(r.timestamp), "mono"));
+    tr.appendChild(td(r.collector || "—", "mono"));
     tr.appendChild(td(r["cpu_usage (%)"] ?? "—", "num"));
     tr.appendChild(td(r["memory_usage (%)"] ?? "—", "num"));
     tr.appendChild(td(r["disk_usage (%)"] ?? "—", "num"));
@@ -52,9 +59,8 @@ function renderRows(rows) {
 }
 
 async function refresh() {
-  const deviceId = (document.body && document.body.dataset && document.body.dataset.selectedDevice) || "";
   const limit = getSelectedLimit();
-  const rows = await fetchRecent(deviceId, limit);
+  const rows = await fetchRecent("", limit);
   renderRows(rows);
 }
 
@@ -70,5 +76,8 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     });
   }
+
+  // Initial load
+  refresh().catch(() => {});
 });
 

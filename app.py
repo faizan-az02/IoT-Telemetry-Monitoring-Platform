@@ -3,7 +3,7 @@ import queue
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 from pymongo import MongoClient
 from config import get as env_get, get_bool as env_get_bool, get_int as env_get_int
@@ -23,6 +23,9 @@ def create_app() -> Flask:
     client = MongoClient(mongo_uri)
     collection = client[mongo_db][mongo_collection]
 
+    # NOTE: We do NOT auto-backfill missing `collector` values.
+    # Older rows without this field remain as-is (shown as "—").
+
     # --- In-memory job registry for telemetry collection (simple, single-process) ---
     jobs_lock = threading.Lock()
     jobs: dict[str, dict] = {}
@@ -36,10 +39,9 @@ def create_app() -> Flask:
         lines.append("")
         return "\n".join(lines) + "\n"
 
-    def _start_collect_job(dataset_size: int, time_interval: float, device_id: str | None) -> str:
+    def _start_collect_job(dataset_size: int, time_interval: float) -> str:
         job_id = uuid.uuid4().hex
         q: queue.Queue[tuple[str, str]] = queue.Queue()
-        resolved_device_id = device_id or env_get("DEVICE_NAME", env_get("DEVICE_ID", "not_found"))
 
         with jobs_lock:
             jobs[job_id] = {
@@ -49,7 +51,6 @@ def create_app() -> Flask:
                 "done_at": None,
                 "dataset_size": dataset_size,
                 "time_interval": time_interval,
-                "device_id": resolved_device_id,
                 "queue": q,
                 "stop": False,
             }
@@ -77,7 +78,7 @@ def create_app() -> Flask:
                     collection=collection,
                     dataset_size=dataset_size,
                     time_interval=time_interval,
-                    device_id=device_id or None,
+                    collector="Docker",
                     on_log=on_log,
                     on_progress=on_progress,
                     stop_flag=stop_flag,
@@ -111,9 +112,13 @@ def create_app() -> Flask:
         # Mongo adds _id (ObjectId) which isn't JSON serializable by default.
         doc = dict(doc)
         doc["_id"] = str(doc.get("_id"))
+        # We no longer use device identifiers in the UI/API.
+        doc.pop("device_id", None)
         ts = doc.get("timestamp")
         if isinstance(ts, datetime):
-            doc["timestamp"] = ts.isoformat()
+            # PyMongo returns BSON dates as naive datetimes representing UTC.
+            # Emit an explicit UTC ISO string so browsers can render it in local time.
+            doc["timestamp"] = ts.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
         return doc
 
     def _to_jsonable(value):
@@ -134,20 +139,16 @@ def create_app() -> Flask:
 
     @app.get("/dashboard")
     def dashboard():
-        device_id = request.args.get("device_id")  # optional filter
         limit = min(int(request.args.get("limit", "25")), MAX_LIMIT)
 
-        query = {}
-        if device_id:
-            query["device_id"] = device_id
-
-        rows = list(collection.find(query).sort("timestamp", -1).limit(limit))
+        # Sort by timestamp (newest first).
+        rows = list(collection.find({}).sort("timestamp", -1).limit(limit))
 
         latest = rows[0] if rows else None
         latest_metrics = None
         if latest:
             latest_metrics = {
-                "device_id": latest.get("device_id"),
+                "collector": latest.get("collector"),
                 "cpu": _safe_float(latest.get("cpu_usage (%)")),
                 "memory": _safe_float(latest.get("memory_usage (%)")),
                 "disk": _safe_float(latest.get("disk_usage (%)")),
@@ -172,13 +173,8 @@ def create_app() -> Flask:
             "disk_avg": _avg(disk_vals),
         }
 
-        # Grab a list of known devices for a simple selector.
-        devices = sorted(collection.distinct("device_id"))
-
         return render_template(
             "dashboard.html",
-            devices=devices,
-            selected_device=device_id or "",
             selected_limit=limit,
             latest=latest_metrics,
             rows=rows,
@@ -187,21 +183,15 @@ def create_app() -> Flask:
 
     @app.get("/analytics")
     def analytics():
-        device_id = request.args.get("device_id")  # optional filter
         limit = min(int(request.args.get("limit", "100")), MAX_LIMIT)
-
-        devices = sorted(collection.distinct("device_id"))
 
         return render_template(
             "analytics.html",
-            devices=devices,
-            selected_device=device_id or "",
             selected_limit=limit,
         )
 
     @app.get("/admin")
     def admin():
-        devices = sorted(collection.distinct("device_id"))
         total_records = collection.count_documents({})
         latest = collection.find_one(sort=[("timestamp", -1)])
         latest_ts = None
@@ -220,7 +210,7 @@ def create_app() -> Flask:
 
         return render_template(
             "admin.html",
-            devices_count=len(devices),
+            collectors_count=len(collection.distinct("collector")),
             mongo_db=env_get("MONGO_DB", "telemetry_db"),
             mongo_collection=env_get("MONGO_COLLECTION", "telemetry_data"),
             max_limit=MAX_LIMIT,
@@ -239,17 +229,13 @@ def create_app() -> Flask:
 
     @app.get("/api/telemetry/latest")
     def api_latest():
-        device_id = request.args.get("device_id")
-        query = {"device_id": device_id} if device_id else {}
-        doc = collection.find_one(query, sort=[("timestamp", -1)])
+        doc = collection.find_one({}, sort=[("timestamp", -1)])
         return jsonify({"data": _serialize_doc(doc)} if doc else {"data": None})
 
     @app.get("/api/telemetry/recent")
     def api_recent():
-        device_id = request.args.get("device_id")
         limit = min(int(request.args.get("limit", "25")), MAX_LIMIT)
-        query = {"device_id": device_id} if device_id else {}
-        docs = list(collection.find(query).sort("timestamp", -1).limit(limit))
+        docs = list(collection.find({}).sort("timestamp", -1).limit(limit))
         return jsonify({"data": [_serialize_doc(d) for d in docs]})
 
     @app.post("/api/telemetry/nl_query")
@@ -258,9 +244,6 @@ def create_app() -> Flask:
         text = (payload.get("text") or "").strip()
         if not text:
             return jsonify({"error": "Missing required field: text"}), 400
-
-        # Optional: let the UI pass a device_id to constrain results if the prompt didn't.
-        device_hint = (payload.get("device_id") or "").strip() or None
 
         try:
             from nl_query_langchain import nl_to_mongo_query
@@ -273,20 +256,6 @@ def create_app() -> Flask:
             compiled = out["compiled"]
         except Exception as e:
             return jsonify({"error": "Failed to build query from text.", "details": str(e)}), 400
-
-        # If UI provided a device, and plan didn't set one, add it.
-        try:
-            plan_device = getattr(plan, "device_id", None)
-        except Exception:
-            plan_device = None
-        if device_hint and not plan_device:
-            try:
-                plan.device_id = device_hint  # pydantic model is mutable by default
-                from nl_query_langchain import compile_plan_to_mongo
-
-                compiled = compile_plan_to_mongo(plan, max_limit=MAX_LIMIT)
-            except Exception:
-                pass
 
         bucket = compiled.get("bucket") or "none"
         rollup = compiled.get("rollup") or "avg"
@@ -404,11 +373,8 @@ def create_app() -> Flask:
 
     @app.get("/collect")
     def collect():
-        devices = sorted(collection.distinct("device_id"))
         return render_template(
             "collect.html",
-            devices=devices,
-            default_device=env_get("DEVICE_NAME", env_get("DEVICE_ID", "edge-1")),
             default_dataset_size=25,
             default_time_interval=1,
         )
@@ -419,13 +385,11 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or request.form
         dataset_size = int(payload.get("dataset_size", 25))
         time_interval = float(payload.get("time_interval", 1))
-        # Device ID is taken from environment variables by the collector.
-        device_id = None
 
         dataset_size = max(1, min(MAX_COLLECT_SAMPLES, dataset_size))
         time_interval = max(0.0, min(MAX_COLLECT_INTERVAL_SEC, time_interval))
 
-        job_id = _start_collect_job(dataset_size=dataset_size, time_interval=time_interval, device_id=device_id)
+        job_id = _start_collect_job(dataset_size=dataset_size, time_interval=time_interval)
         return jsonify(
             {
                 "job_id": job_id,
@@ -451,7 +415,6 @@ def create_app() -> Flask:
                         "job_id": job_id,
                         "dataset_size": job.get("dataset_size"),
                         "time_interval": job.get("time_interval"),
-                        "device_id": job.get("device_id"),
                     }
                 ),
             )

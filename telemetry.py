@@ -2,7 +2,7 @@ import argparse
 import ctypes
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import psutil
@@ -142,7 +142,7 @@ def collect_telemetry(
     collection: Collection,
     dataset_size: int,
     time_interval: float,
-    device_id: Optional[str] = None,
+    collector: str = "Host",
     on_log: Optional[Callable[[str], None]] = None,
     on_progress: Optional[Callable[[int, int], None]] = None,
     stop_flag: Optional[Callable[[], bool]] = None,
@@ -152,8 +152,6 @@ def collect_telemetry(
         raise ValueError("dataset_size must be > 0")
     if time_interval < 0:
         raise ValueError("time_interval must be >= 0")
-
-    device_id = device_id or env_get("DEVICE_NAME", env_get("DEVICE_NAME", "edge-1"))
 
     def log(msg: str) -> None:
         if on_log:
@@ -176,7 +174,11 @@ def collect_telemetry(
             log("Telemetry data collection cancelled.")
             return
 
-        now = datetime.now()
+        # Store UTC in Mongo to avoid host timezone skew.
+        # (PyMongo treats naive datetimes as UTC. If we used datetime.now() on a non-UTC machine,
+        #  the stored timestamps would appear "in the future".)
+        now_utc = datetime.now(timezone.utc)
+        now_local = datetime.now()
         # Start disk sampling window
         if pdh:
             pdh.collect()
@@ -200,12 +202,12 @@ def collect_telemetry(
             disk_pct = _disk_active_percent_fallback(io0, io1, dt)
 
         telemetry_data = {
-            "device_id": device_id,
+            "collector": collector,
             "cpu_usage (%)": cpu_pct,
             "memory_usage (%)": psutil.virtual_memory().percent,
             "disk_usage (%)": round(float(disk_pct), 2),
-            "timestamp": now,
-            "datetime_str": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": now_utc,
+            "datetime_str": now_local.strftime("%Y-%m-%d %H:%M:%S"),
         }
 
         collection.insert_one(telemetry_data)
@@ -228,7 +230,6 @@ def _main() -> int:
     parser = argparse.ArgumentParser(description="Collect telemetry and write to MongoDB")
     parser.add_argument("--dataset-size", type=int, default=25, help="Number of samples to collect (default: 25)")
     parser.add_argument("--time-interval", type=float, default=1.0, help="Seconds between samples (default: 1.0)")
-    parser.add_argument("--device-id", type=str, default=None, help="Device ID override")
     parser.add_argument("--mongo-uri", type=str, default=env_get("MONGO_URI", "mongodb://localhost:27017/"))
     parser.add_argument("--mongo-db", type=str, default=env_get("MONGO_DB", "telemetry_db"))
     parser.add_argument("--mongo-collection", type=str, default=env_get("MONGO_COLLECTION", "telemetry_data"))
@@ -247,7 +248,7 @@ def _main() -> int:
         collection=collection,
         dataset_size=args.dataset_size,
         time_interval=args.time_interval,
-        device_id=args.device_id,
+        collector="Host",
         on_log=on_log,
         on_progress=on_progress,
     )

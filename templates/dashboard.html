@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   </head>
 
-  <body data-selected-device="{{ selected_device or '' }}">
+  <body>
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
@@ -39,16 +39,6 @@
             <h1 class="page-title">Dashboard</h1>
 
             <form class="filters filters-inline" method="get" action="{{ url_for('dashboard') }}">
-              <label class="field">
-                <span class="field-label">Device</span>
-                <select name="device_id" class="select">
-                  <option value="" {% if not selected_device %}selected{% endif %}>All devices</option>
-                  {% for d in (devices or []) %}
-                    <option value="{{ d }}" {% if selected_device == d %}selected{% endif %}>{{ d }}</option>
-                  {% endfor %}
-                </select>
-              </label>
-
               <label class="field">
                 <span class="field-label">Samples</span>
                 <select name="limit" class="select">
@@ -84,8 +74,8 @@
             </div>
             <div class="card-foot">
               <div class="muted">
-                {% if latest and latest.device_id %}
-                  Device: <strong>{{ latest.device_id }}</strong>
+                {% if latest and latest.collector %}
+                  Collector: <strong>{{ latest.collector }}</strong>
                 {% else %}
                   No samples yet
                 {% endif %}
@@ -167,7 +157,7 @@
                 <tr>
                   <th class="col-idx">#</th>
                   <th>Timestamp</th>
-                  <th>Device</th>
+                  <th>Collector</th>
                   <th class="num">CPU (%)</th>
                   <th class="num">Memory (%)</th>
                   <th class="num">Disk (%)</th>
@@ -180,7 +170,7 @@
                     <td class="mono">
                       {{ r.get("datetime_str") or r.get("timestamp") or "—" }}
                     </td>
-                    <td class="mono">{{ r.get("device_id", "—") }}</td>
+                    <td class="mono">{{ r.get("collector", "—") }}</td>
                     <td class="num">{{ r.get("cpu_usage (%)", "—") }}</td>
                     <td class="num">{{ r.get("memory_usage (%)", "—") }}</td>
                     <td class="num">{{ r.get("disk_usage (%)", "—") }}</td>

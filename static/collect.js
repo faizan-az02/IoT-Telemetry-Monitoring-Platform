@@ -24,6 +24,20 @@ function setProgress(cur, total) {
   }
 }
 
+async function detectCollectorBase() {
+  // Prefer host agent (host metrics) if running, otherwise fall back to container endpoint.
+  const agentBase = `http://${location.hostname}:8765`;
+  try {
+    const ping = await fetch(`${agentBase}/health`, { method: "GET" });
+    if (ping.ok) {
+      return { base: agentBase, label: "Host" };
+    }
+  } catch {
+    // ignore
+  }
+  return { base: "", label: "Docker Container" };
+}
+
 async function startJob() {
   const form = qs("#collectForm");
   const startBtn = qs("#startBtn");
@@ -38,7 +52,11 @@ async function startJob() {
   setStatus("Starting…");
   setProgress(0, 0);
 
-  const res = await fetch("/collect/start", {
+  const detected = await detectCollectorBase();
+  const base = detected.base;
+  const collectorLabel = detected.label;
+
+  const res = await fetch(`${base}/collect/start`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ dataset_size, time_interval }),
@@ -51,7 +69,7 @@ async function startJob() {
   es.addEventListener("meta", (e) => {
     try {
       const meta = JSON.parse(e.data);
-      appendLog(`Device: ${meta.device_id || "edge-1"}`);
+      appendLog(`Collector: ${collectorLabel}`);
       appendLog(`Dataset size: ${meta.dataset_size}`);
       appendLog(`Interval: ${meta.time_interval}s`);
     } catch {
@@ -89,6 +107,8 @@ async function startJob() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  // Warm up detection (no UI output needed)
+  detectCollectorBase().catch(() => {});
   const startBtn = qs("#startBtn");
   if (startBtn) {
     startBtn.addEventListener("click", () => {
