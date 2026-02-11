@@ -310,15 +310,10 @@ async function runNlAnalytics() {
     const memS = stat(mem);
     const diskS = stat(disk);
 
-    if (norm.mode === "summary") {
-      setText("cpuStat", cpuS ? fmt(cpuS.max) : "—");
-      setText("memStat", memS ? fmt(memS.max) : "—");
-      setText("diskStat", diskS ? fmt(diskS.max) : "—");
-    } else {
-      setText("cpuStat", cpuS ? `${fmt(cpuS.avg)} / ${fmt(cpuS.min)} / ${fmt(cpuS.max)}` : "—");
-      setText("memStat", memS ? `${fmt(memS.avg)} / ${fmt(memS.min)} / ${fmt(memS.max)}` : "—");
-      setText("diskStat", diskS ? `${fmt(diskS.avg)} / ${fmt(diskS.min)} / ${fmt(diskS.max)}` : "—");
-    }
+    // Top cards: show MAX only
+    setText("cpuStat", cpuS ? fmt(cpuS.max) : "—");
+    setText("memStat", memS ? fmt(memS.max) : "—");
+    setText("diskStat", diskS ? fmt(diskS.max) : "—");
 
     setText("cpuMeta", "Source: MongoDB");
     setText("memMeta", `Mode: ${norm.mode}`);
@@ -369,9 +364,10 @@ async function loadAnalytics() {
   const memS = stat(mem);
   const diskS = stat(disk);
 
-  setText("cpuStat", cpuS ? `${fmt(cpuS.avg)} / ${fmt(cpuS.min)} / ${fmt(cpuS.max)}` : "—");
-  setText("memStat", memS ? `${fmt(memS.avg)} / ${fmt(memS.min)} / ${fmt(memS.max)}` : "—");
-  setText("diskStat", diskS ? `${fmt(diskS.avg)} / ${fmt(diskS.min)} / ${fmt(diskS.max)}` : "—");
+  // Top cards: show MAX only
+  setText("cpuStat", cpuS ? fmt(cpuS.max) : "—");
+  setText("memStat", memS ? fmt(memS.max) : "—");
+  setText("diskStat", diskS ? fmt(diskS.max) : "—");
 
   setText("cpuMeta", "Source: MongoDB");
   setText("memMeta", `N capped at 100`);
