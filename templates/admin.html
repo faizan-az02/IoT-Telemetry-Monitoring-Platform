@@ -96,7 +96,9 @@
                 <div class="card-head">
                   <div>
                     <div class="card-kicker">Latest ingest</div>
-                    <div class="card-value mono">{{ latest_timestamp or "—" }}</div>
+                    <div class="card-value mono" id="latestIngestTs" data-ts="{{ latest_timestamp or '' }}">
+                      {{ latest_timestamp or "—" }}
+                    </div>
                   </div>
                   <div class="badge">TS</div>
                 </div>
@@ -121,6 +123,15 @@
           const ok = confirm("Clear ALL telemetry records from MongoDB?\n\nThis cannot be undone.");
           if (!ok) e.preventDefault();
         });
+
+        // Render latest ingest in browser-local time for consistency with other pages.
+        const el = document.getElementById("latestIngestTs");
+        if (el && el.dataset && el.dataset.ts) {
+          const d = new Date(el.dataset.ts);
+          if (!Number.isNaN(d.getTime())) {
+            el.textContent = d.toLocaleString();
+          }
+        }
       })();
     </script>
   </body>

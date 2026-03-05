@@ -27,9 +27,17 @@ async function fetchNlQuery(text, deviceId, limit) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || `NL query failed (${res.status})`);
-  return json;
+  const raw = await res.text();
+  let json = null;
+  try {
+    json = raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    // If the server returned HTML (e.g. redirect/proxy error), surface it clearly.
+    const snippet = String(raw || "").slice(0, 200).replace(/\s+/g, " ").trim();
+    throw new Error(`NL query returned non-JSON (${res.status}). ${snippet ? `Body: ${snippet}` : ""}`.trim());
+  }
+  if (!res.ok) throw new Error((json && json.error) || `NL query failed (${res.status})`);
+  return json || {};
 }
 
 function toNumber(x) {
@@ -81,7 +89,21 @@ function formatTimeValue(v) {
 }
 
 function formatRowTime(r) {
-  return formatTimeValue(r && r.timestamp);
+  // Always prefer explicit UTC ISO (`...Z`) so browser can render *local* time consistently.
+  return formatTimeValue((r && (r.timestamp || r.datetime_str)) || "—");
+}
+
+function titleCaseWord(s) {
+  if (!s || typeof s !== "string") return String(s ?? "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+function kv(key, value) {
+  const k = String(key || "").trim();
+  const v = String(value ?? "").trim();
+  if (!k) return v;
+  if (!v) return `${k} = —`;
+  return `${k} = ${v}`;
 }
 
 function resetNlTable() {
@@ -100,7 +122,7 @@ function resetNlTable() {
   `;
   body.innerHTML = `
     <tr>
-      <td colspan="6" class="empty">Run an AI query to see results here.</td>
+      <td colspan="6" class="empty">Run a query to see results here.</td>
     </tr>
   `;
 }
@@ -315,9 +337,12 @@ async function runNlAnalytics() {
     setText("memStat", memS ? fmt(memS.max) : "—");
     setText("diskStat", diskS ? fmt(diskS.max) : "—");
 
-    setText("cpuMeta", "Source: MongoDB");
-    setText("memMeta", `Mode: ${norm.mode}`);
-    setText("diskMeta", norm.bucket && norm.bucket !== "none" ? `bucket=${norm.bucket} (${norm.rollup})` : `rollup=${norm.rollup}`);
+    // Keep helper text consistent with what the cards display.
+    const modeLabel = titleCaseWord(norm.mode);
+    const bucketLabel = norm.bucket && norm.bucket !== "none" ? String(norm.bucket) : "";
+    setText("cpuMeta", `${kv("Rollup", "Max")} · ${kv("Source", "MongoDB")}`);
+    setText("memMeta", `${kv("Mode", modeLabel)} · ${kv("Rollup", "Max")}`);
+    setText("diskMeta", bucketLabel ? `${kv("Bucket", bucketLabel)} · ${kv("Rollup", "Max")}` : kv("Rollup", "Max"));
 
     setText("countStat", String(norm.count));
     setText(
@@ -369,9 +394,9 @@ async function loadAnalytics() {
   setText("memStat", memS ? fmt(memS.max) : "—");
   setText("diskStat", diskS ? fmt(diskS.max) : "—");
 
-  setText("cpuMeta", "Source: MongoDB");
-  setText("memMeta", `N capped at 100`);
-  setText("diskMeta", `N capped at 100`);
+  setText("cpuMeta", `${kv("Mode", "Raw")} · ${kv("Rollup", "Max")} · ${kv("N", "≤ 100")}`);
+  setText("memMeta", `${kv("Mode", "Raw")} · ${kv("Rollup", "Max")} · ${kv("N", "≤ 100")}`);
+  setText("diskMeta", `${kv("Mode", "Raw")} · ${kv("Rollup", "Max")} · ${kv("N", "≤ 100")}`);
   setText("countStat", String(rows.length));
 
   const newest = rows[0] && (rows[0].datetime_str || rows[0].timestamp);

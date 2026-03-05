@@ -73,24 +73,27 @@ def _default_model() -> str:
     return env_get("GITHUB_MODEL", env_get("OPENAI_MODEL", "gpt-4o-mini")) or "gpt-4o-mini"
 
 
-def _parse_iso_to_local_naive(iso: str) -> datetime:
+def _parse_iso_to_utc_naive(iso: str) -> datetime:
     """
-    Parse ISO string and convert to *local* naive datetime.
+    Parse ISO string and convert to UTC naive datetime.
 
     IMPORTANT:
-    - `telemetry.py` stores timestamps as naive *local* datetimes (datetime.now()).
-    - So when the model outputs ISO timestamps with Z/+00:00, we must convert them
-      back to local time before querying Mongo, otherwise time-window queries like
-      "today" can exclude all rows.
+    - `telemetry.py` stores `timestamp` using `datetime.now(timezone.utc)`.
+      PyMongo stores BSON datetimes in UTC and returns them as naive datetimes by default.
+    - So when the model outputs ISO timestamps with Z/+00:00 or a local offset, we
+      must convert them to UTC and drop tzinfo so comparisons match correctly.
     """
     s = iso.strip().replace("Z", "+00:00")
     dt = datetime.fromisoformat(s)
     if dt.tzinfo is None:
-        # If it's naive, assume it's already local.
-        return dt
-    local_tz = datetime.now().astimezone().tzinfo
-    dt_local = dt.astimezone(local_tz) if local_tz else dt
-    return dt_local.replace(tzinfo=None)
+        # If it's naive, assume it's local time, then convert to UTC.
+        local_tz = datetime.now().astimezone().tzinfo
+        if local_tz:
+            dt = dt.replace(tzinfo=local_tz)
+        else:
+            dt = dt.replace(tzinfo=timezone.utc)
+    dt_utc = dt.astimezone(timezone.utc)
+    return dt_utc.replace(tzinfo=None)
 
 
 def _clamp_limit(limit: Optional[int], *, max_limit: int) -> int:
@@ -138,9 +141,9 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
     if plan.time and (plan.time.start or plan.time.end):
         rng: dict[str, Any] = {}
         if plan.time.start:
-            rng["$gte"] = _parse_iso_to_local_naive(plan.time.start)
+            rng["$gte"] = _parse_iso_to_utc_naive(plan.time.start)
         if plan.time.end:
-            rng["$lte"] = _parse_iso_to_local_naive(plan.time.end)
+            rng["$lte"] = _parse_iso_to_utc_naive(plan.time.end)
         q["timestamp"] = rng
 
     # Additional filters
@@ -154,8 +157,8 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
                 continue
             # timestamps are special: parse iso -> datetime
             if f.field == "timestamp":
-                v1 = _parse_iso_to_local_naive(f.value)
-                v2 = _parse_iso_to_local_naive(f.value2)
+                v1 = _parse_iso_to_utc_naive(f.value)
+                v2 = _parse_iso_to_utc_naive(f.value2)
                 # Merge with any existing timestamp range
                 _merge_op(field, "$gte", v1)
                 _merge_op(field, "$lte", v2)
@@ -173,7 +176,7 @@ def compile_plan_to_mongo(plan: NLQueryPlan, *, max_limit: int = DEFAULT_MAX_LIM
             continue
 
         if f.field == "timestamp":
-            v = _parse_iso_to_local_naive(f.value)
+            v = _parse_iso_to_utc_naive(f.value)
         elif f.field == "collector":
             v = str(f.value)
         else:

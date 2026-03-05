@@ -137,7 +137,10 @@
             </div>
             <div class="card-foot">
               <div class="muted">
-                Last update: {% if latest and latest.datetime_str %}{{ latest.datetime_str }}{% else %}—{% endif %}
+                Last update:
+                <span class="mono" id="lastUpdateTs" data-ts="{% if latest and latest.timestamp %}{{ latest.timestamp }}{% endif %}">
+                  {% if latest and latest.timestamp %}{{ latest.timestamp }}{% else %}—{% endif %}
+                </span>
               </div>
             </div>
           </div>

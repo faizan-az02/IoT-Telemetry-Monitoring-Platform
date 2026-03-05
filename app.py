@@ -117,8 +117,15 @@ def create_app() -> Flask:
         ts = doc.get("timestamp")
         if isinstance(ts, datetime):
             # PyMongo returns BSON dates as naive datetimes representing UTC.
-            # Emit an explicit UTC ISO string so browsers can render it in local time.
-            doc["timestamp"] = ts.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+            # Keep `timestamp` as explicit UTC ISO (portable) and ALSO include a local-time string
+            # so the UI (and humans) can use local time without ambiguity.
+            ts_utc = ts.replace(tzinfo=timezone.utc)
+            doc["timestamp"] = ts_utc.isoformat().replace("+00:00", "Z")
+            try:
+                doc["timestamp_local"] = ts_utc.astimezone().replace(tzinfo=None, microsecond=0).isoformat()
+            except Exception:
+                # Best-effort; if tz conversion fails, omit local timestamp.
+                pass
         return doc
 
     def _to_jsonable(value):
@@ -147,11 +154,14 @@ def create_app() -> Flask:
         latest = rows[0] if rows else None
         latest_metrics = None
         if latest:
+            latest_ser = _serialize_doc(latest)
             latest_metrics = {
                 "collector": latest.get("collector"),
                 "cpu": _safe_float(latest.get("cpu_usage (%)")),
                 "memory": _safe_float(latest.get("memory_usage (%)")),
                 "disk": _safe_float(latest.get("disk_usage (%)")),
+                # Prefer ISO timestamp so the browser can render local time consistently.
+                "timestamp": latest_ser.get("timestamp"),
                 "datetime_str": latest.get("datetime_str"),
             }
 
@@ -196,11 +206,8 @@ def create_app() -> Flask:
         latest = collection.find_one(sort=[("timestamp", -1)])
         latest_ts = None
         if latest:
-            ts = latest.get("datetime_str") or latest.get("timestamp")
-            if isinstance(ts, datetime):
-                latest_ts = ts.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                latest_ts = str(ts) if ts is not None else None
+            # Prefer ISO UTC timestamp so the browser can render local time consistently.
+            latest_ts = _serialize_doc(latest).get("timestamp")
 
         cleared = request.args.get("cleared")
         try:
@@ -266,6 +273,20 @@ def create_app() -> Flask:
         # Execute against the existing app Mongo collection (no new connection).
         mode = "raw"
         data = []
+        relaxed = False
+        relaxed_reason = None
+        compiled_relaxed = None
+
+        def _relax_filter_if_needed(current_filter: dict) -> dict:
+            # If the plan included a time range that matches nothing (common),
+            # retry without the time constraint so the UI isn't empty.
+            if not isinstance(current_filter, dict):
+                return current_filter
+            if "timestamp" not in current_filter:
+                return current_filter
+            nf = dict(current_filter)
+            nf.pop("timestamp", None)
+            return nf
 
         if (bucket in (None, "none")) and (rollup in {"max", "min"}):
             mode = "summary"
@@ -274,23 +295,42 @@ def create_app() -> Flask:
             def _conv(field: str):
                 return {"$convert": {"input": f"${field}", "to": "double", "onError": None, "onNull": None}}
 
-            pipeline = [
-                {"$match": flt},
-                {
-                    "$group": {
-                        "_id": None,
-                        "count": {"$sum": 1},
-                        "cpu": {op: _conv("cpu_usage (%)")},
-                        "memory": {op: _conv("memory_usage (%)")},
-                        "disk": {op: _conv("disk_usage (%)")},
-                    }
-                },
-            ]
-            rows = list(collection.aggregate(pipeline))
+            def _run_summary(match_filter: dict):
+                pipeline = [
+                    {"$match": match_filter},
+                    {
+                        "$group": {
+                            "_id": None,
+                            "count": {"$sum": 1},
+                            "cpu": {op: _conv("cpu_usage (%)")},
+                            "memory": {op: _conv("memory_usage (%)")},
+                            "disk": {op: _conv("disk_usage (%)")},
+                        }
+                    },
+                ]
+                return list(collection.aggregate(pipeline))
+
+            rows = _run_summary(flt)
             r = rows[0] if rows else {}
+            count = int(r.get("count") or 0)
+
+            # Relax time filter if nothing matched.
+            if count == 0:
+                flt2 = _relax_filter_if_needed(flt)
+                if flt2 is not flt:
+                    rows2 = _run_summary(flt2)
+                    r2 = rows2[0] if rows2 else {}
+                    count2 = int(r2.get("count") or 0)
+                    if count2 > 0:
+                        relaxed = True
+                        relaxed_reason = "No matches for requested time window; showing max/min over all available samples."
+                        compiled_relaxed = {"filter": flt2}
+                        r = r2
+                        count = count2
+
             data = [
                 {
-                    "count": int(r.get("count") or 0),
+                    "count": count,
                     "cpu": r.get("cpu"),
                     "memory": r.get("memory"),
                     "disk": r.get("disk"),
@@ -300,6 +340,15 @@ def create_app() -> Flask:
         elif bucket in (None, "none"):
             mode = "raw"
             docs = list(collection.find(flt).sort(sort[0], int(sort[1])).limit(limit))
+            if not docs:
+                flt2 = _relax_filter_if_needed(flt)
+                if flt2 is not flt:
+                    docs2 = list(collection.find(flt2).sort(sort[0], int(sort[1])).limit(limit))
+                    if docs2:
+                        relaxed = True
+                        relaxed_reason = "No matches for requested time window; showing results without the time filter."
+                        compiled_relaxed = {"filter": flt2}
+                        docs = docs2
             data = [_serialize_doc(d) for d in docs]
         else:
             mode = "bucketed"
@@ -342,11 +391,23 @@ def create_app() -> Flask:
                 {"$limit": limit},
             ]
             rows = list(collection.aggregate(pipeline))
+            if not rows:
+                flt2 = _relax_filter_if_needed(flt)
+                if flt2 is not flt:
+                    pipeline2 = list(pipeline)
+                    pipeline2[0] = {"$match": flt2}
+                    rows2 = list(collection.aggregate(pipeline2))
+                    if rows2:
+                        relaxed = True
+                        relaxed_reason = "No matches for requested time window; showing bucketed results without the time filter."
+                        compiled_relaxed = {"filter": flt2}
+                        rows = rows2
             out_rows = []
             for r in rows:
                 ts = r.get("_id")
                 if isinstance(ts, datetime):
-                    ts = ts.isoformat()
+                    # Aggregation buckets are BSON dates (UTC). Emit explicit Z so browsers render local time correctly.
+                    ts = ts.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
                 out_rows.append(
                     {
                         "timestamp": ts,
@@ -361,12 +422,33 @@ def create_app() -> Flask:
 
         plan_json = plan.model_dump() if hasattr(plan, "model_dump") else plan
         compiled_json = _to_jsonable(compiled)
+        meta = {
+            "mode": mode,
+            "bucket": bucket,
+            "rollup": rollup,
+            "limit": limit,
+            "total_records": int(collection.estimated_document_count()),
+        }
+        # Attach matched count to make "empty" vs "error" obvious in the UI.
+        try:
+            if mode == "summary":
+                meta["matched_records"] = int((data[0] or {}).get("count") or 0) if data else 0
+            else:
+                meta["matched_records"] = len(data) if isinstance(data, list) else 0
+        except Exception:
+            pass
+        if relaxed:
+            meta["relaxed"] = True
+            meta["relaxed_reason"] = relaxed_reason
+        if compiled_relaxed:
+            compiled_json = dict(compiled_json)
+            compiled_json["relaxed"] = _to_jsonable(compiled_relaxed)
 
         return jsonify(
             {
                 "plan": plan_json,
                 "compiled": compiled_json,
-                "meta": {"mode": mode, "bucket": bucket, "rollup": rollup, "limit": limit},
+                "meta": meta,
                 "data": data,
             }
         )

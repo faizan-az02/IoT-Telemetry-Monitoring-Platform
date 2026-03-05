@@ -62,6 +62,13 @@ async function refresh() {
   const limit = getSelectedLimit();
   const rows = await fetchRecent("", limit);
   renderRows(rows);
+
+  // Keep "Last update" consistent with the table (browser-local time).
+  const last = document.getElementById("lastUpdateTs");
+  if (last) {
+    const iso = rows && rows[0] ? rows[0].timestamp : (last.dataset ? last.dataset.ts : "");
+    last.textContent = fmtLocalTimestamp(iso);
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
